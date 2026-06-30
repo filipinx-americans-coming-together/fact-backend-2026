@@ -135,7 +135,7 @@ def agenda_items_bulk(request):
 
         try:
             agenda_df = pd.read_excel(file)
-        except:
+        except Exception:
             return JsonResponse({"message": "Error reading file"}, status=400)
 
         agenda_df = agenda_df.drop_duplicates()

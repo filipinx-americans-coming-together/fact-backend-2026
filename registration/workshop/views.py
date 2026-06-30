@@ -108,7 +108,7 @@ def workshops_bulk(request):
 
         try:
             workshop_df = pd.read_excel(file)
-        except:
+        except Exception:
             return JsonResponse({"message": "Error reading file"}, status=400)
 
         workshop_df = workshop_df.drop_duplicates()
@@ -225,7 +225,7 @@ def workshops_bulk(request):
             try:
                 cap = int(row["preferred_cap"])
                 workshop.preferred_cap = cap
-            except:
+            except (ValueError, TypeError):
                 pass
 
             workshop.save()
@@ -285,7 +285,7 @@ def workshops_bulk(request):
                 try:
                     cap = int(row["preferred_cap"])
                     workshop.preferred_cap = cap
-                except:
+                except (ValueError, TypeError):
                     pass
 
                 workshop.save()

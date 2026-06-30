@@ -98,7 +98,7 @@ def schools_bulk(request):
 
         try:
             school_df = pd.read_excel(file)
-        except:
+        except Exception:
             return JsonResponse({"message": "Error reading file"}, status=400)
 
         school_df = school_df.drop_duplicates()

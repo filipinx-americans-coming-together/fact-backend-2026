@@ -5,6 +5,7 @@ from django.http import HttpResponse, JsonResponse
 from django.core import serializers as django_serializers
 from django.contrib.auth.models import User
 from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
 from django.contrib.auth import authenticate, login, logout
 from django.core.mail import send_mail
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
@@ -70,7 +71,6 @@ def delegate_me(request):
         workshop_3_id = data.get("workshop_3_id")
 
         workshop_ids = [workshop_1_id, workshop_2_id, workshop_3_id]
-        print(workshop_ids)
 
         # update data
 
@@ -83,7 +83,7 @@ def delegate_me(request):
         if email and len(email) > 0:
             try:
                 validate_email(email)
-            except:
+            except ValidationError:
                 return JsonResponse({"message": "Invalid email"}, status=400)
 
             if email != user.email and User.objects.filter(email=email).exists():
@@ -100,7 +100,7 @@ def delegate_me(request):
             try:
                 validate_password(new_password)
                 user.set_password(new_password)
-            except:
+            except ValidationError:
                 return JsonResponse(
                     {"message": "Password is not strong enough"}, status=400
                 )
@@ -215,7 +215,7 @@ def delegates(request):
             try:
                 workshop = Workshop.objects.get(pk=int(workshop_id))
                 session = workshop.session
-            except:
+            except (Workshop.DoesNotExist, ValueError):
                 return JsonResponse(
                     {"message": "Requested workshop not found"}, status=404
                 )
@@ -247,7 +247,7 @@ def delegates(request):
         # check user exists
         try:
             user = User.objects.get(email=email)
-        except:
+        except User.DoesNotExist:
             return JsonResponse({"message": "User not found"}, status=404)
 
         delegate = user.delegate
@@ -326,7 +326,7 @@ def create_delegate(request):
 
         try:
             validate_email(email)
-        except:
+        except ValidationError:
             return JsonResponse({"message": "Invalid email"}, status=400)
 
         if User.objects.filter(email=email).exists():
@@ -334,7 +334,7 @@ def create_delegate(request):
 
         try:
             validate_password(password)
-        except:
+        except ValidationError:
             return JsonResponse({"message": "Password is too weak"}, status=400)
 
         # set user data
@@ -435,7 +435,7 @@ def request_password_reset(request):
         # return "success" even if no connected user exists
         try:
             user = User.objects.get(email=email)
-        except:
+        except User.DoesNotExist:
             return JsonResponse(
                 {
                     "message": "If email is connected to account, reset password link has been sent"
@@ -502,7 +502,7 @@ def reset_password(request):
             user = User.objects.get(email=email)
             user.set_password(password)
             user.save()
-        except:
+        except (PasswordReset.DoesNotExist, User.DoesNotExist):
             return JsonResponse({"message": "Invalid reset token"}, status=409)
 
         return JsonResponse({"message": "success"})

@@ -175,51 +175,6 @@ def set_locations(self):
         workshop.save()
 
 
-# def set_locations(session_num):
-#     # get/sort workshops
-#     workshops = Workshop.objects.filter(session=session_num).values()
-#     workshop_df = pd.DataFrame(data=workshops)
-
-#     registrations = []
-#     for idx, row in workshop_df.iterrows():
-#         registrations.append(len(Registration.objects.filter(workshop_id=idx)))
-
-#     workshop_df["registrations"] = registrations
-#     workshop_df = workshop_df.sort_values("registrations", ascending=False)
-
-#     # get/sort locations
-#     locations = Location.objects.filter(session=session_num).values()
-#     location_df = pd.DataFrame(data=locations)
-#     location_df = location_df.sort_values("capacity", ascending=False)
-
-#     if len(location_df) < len(workshop_df):
-#         return False
-
-#     # verify locations work
-#     for i in range(len(workshop_df)):
-#         if workshop_df.iloc[i]["registrations"] > location_df.iloc[i]["capacity"]:
-#             return False
-
-#     # clear locations
-#     for i in range(len(workshop_df)):
-#         workshop_id = workshop_df.iloc[i]["id"]
-#         workshop = Workshop.objects.get(pk=workshop_id)
-
-#         workshop.location = None
-#         workshop.save()
-
-#     # place locations
-#     for i in range(len(workshop_df)):
-#         workshop_id = workshop_df.iloc[i]["id"]
-#         location_id = location_df.iloc[i]["id"]
-
-#         workshop = Workshop.objects.get(pk=workshop_id)
-#         location = Location.objects.get(pk=location_id)
-
-#         workshop.location = location
-#         workshop.save()
-
-#     return True
 
 
 class Command(BaseCommand):

@@ -81,7 +81,7 @@ def notifications(request):
 
         try:
             expiration = timezone.datetime.fromisoformat(expiration)
-        except:
+        except ValueError:
             return JsonResponse(
                 {"message": "Expiration could not be converted to valid date/time"},
                 status=400,

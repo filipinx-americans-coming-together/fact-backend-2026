@@ -71,7 +71,7 @@ def locations(request):
             return HttpResponse(data, content_type="application/json", status=201)
         except ValidationError as e:
             return JsonResponse({"message": str(e)}, status=400)
-        except:
+        except Exception:
             return JsonResponse({"message": "INVALID ERROR"}, status=405)
     elif request.method == "GET":
         data = django_serializers.serialize("json", Location.objects.all())
@@ -164,7 +164,7 @@ def locations_bulk(request):
 
         try:
             location_df = pd.read_excel(file)
-        except:
+        except Exception:
             return JsonResponse({"message": "Error reading file"}, status=400)
 
         location_df = location_df.drop_duplicates()
