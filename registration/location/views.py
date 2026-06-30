@@ -4,7 +4,6 @@ from django.http import HttpResponse, JsonResponse
 from registration.models import Location
 from django.core.exceptions import ValidationError
 from django.core import serializers as django_serializers
-from django.views.decorators.csrf import csrf_exempt
 
 import pandas as pd
 
@@ -134,8 +133,6 @@ def location_id(request, id):
     else:
         return JsonResponse({"message": "Method not allowed"}, status=405)
 
-
-@csrf_exempt
 def locations_bulk(request):
     """
     POST: Bulk upload locations from Excel file (admin only)

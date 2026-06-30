@@ -1,4 +1,6 @@
 import json
+import environ
+
 from django.http import HttpResponse, JsonResponse
 from django.core import serializers as django_serializers
 from django.contrib.auth.models import User
@@ -8,6 +10,7 @@ from django.core.mail import send_mail
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.utils import timezone
 from django.contrib.auth.password_validation import validate_password
+from django.db import transaction
 
 from registration import serializers
 from registration.models import (
@@ -21,7 +24,6 @@ from registration.models import (
     Workshop,
 )
 
-import environ
 
 env = environ.Env()
 environ.Env.read_env()
@@ -253,14 +255,18 @@ def delegates(request):
         workshop_details = {}
 
         # set registration data
-        for workshop_id in workshop_ids:
-            workshop = Workshop.objects.get(pk=workshop_id)
+        try:
+            with transaction.atomic():
+                for workshop_id in workshop_ids:
+                    workshop = Workshop.objects.get(pk=workshop_id)
 
-            registration = Registration(delegate=delegate, workshop=workshop)
-            registration.save()
+                    registration = Registration(delegate=delegate, workshop=workshop)
+                    registration.save()
 
-            # save workshop names for email
-            workshop_details[workshop.session] = workshop.title
+                    # save workshop names for email
+                    workshop_details[workshop.session] = workshop.title
+        except Exception as e:
+            return JsonResponse({"message": "Server error during registration"}, status=500)
 
         # login
         login(request, user)
@@ -332,26 +338,28 @@ def create_delegate(request):
             return JsonResponse({"message": "Password is too weak"}, status=400)
 
         # set user data
-        user = User(username=email, email=email, first_name=f_name, last_name=l_name)
-        user.set_password(password)
+        try:
+            with transaction.atomic():
+                user = User(username=email, email=email, first_name=f_name, last_name=l_name)
+                user.set_password(password)
+                user.save()
 
-        user.save()
+                # set delegate data
+                delegate = Delegate(user=user, pronouns=pronouns, year=year)
 
-        # set delegate data
-        delegate = Delegate(user=user, pronouns=pronouns, year=year)
+                if school_id:
+                    if (
+                        str(school_id).isdigit()
+                        and School.objects.filter(pk=school_id).exists()
+                    ):
+                        delegate.school_id = school_id
+                elif other_school_name and len(other_school_name) > 0:
+                    delegate.other_school = other_school_name
+                    NewSchool.objects.create(name=other_school_name)
 
-        if school_id:
-            if (
-                str(school_id).isdigit()
-                and School.objects.filter(pk=school_id).exists()
-            ):
-                user.delegate.school_id = school_id
-        elif other_school_name and len(other_school_name) > 0:
-            user.delegate.other_school = other_school_name
-
-            NewSchool.objects.create(name=other_school_name)
-
-        delegate.save()
+                delegate.save()
+        except Exception as e:
+            return JsonResponse({"message": "Server error during registration"}, status=500)
 
         # login
         login(request, user)

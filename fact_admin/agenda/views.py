@@ -106,8 +106,6 @@ def agenda_items_id(request, id):
     else:
         return JsonResponse({"message": "method not allowed"}, status=405)
 
-
-@csrf_exempt
 def agenda_items_bulk(request):
     """
     POST: Bulk upload agenda items from Excel (admin only)

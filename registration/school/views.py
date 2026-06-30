@@ -2,7 +2,6 @@ import json
 from django.http import HttpResponse, JsonResponse
 from django.core import serializers as django_serializers
 import pandas as pd
-from django.views.decorators.csrf import csrf_exempt
 
 from registration.models import Delegate, NewSchool, School
 
@@ -69,7 +68,6 @@ def new_schools(request):
         return JsonResponse({"message": "Method not allowed"}, status=405)
 
 
-@csrf_exempt
 def schools_bulk(request):
     """
     POST: Bulk upload schools from Excel file (admin only)

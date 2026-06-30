@@ -250,8 +250,6 @@ def location_sheet(request):
     else:
         return JsonResponse({"message": "method not allowed"}, status=405)
 
-
-@csrf_exempt
 def send_facilitator_links(request):
     """
     POST: Print (instead of send) individual login links to facilitators (admin only)

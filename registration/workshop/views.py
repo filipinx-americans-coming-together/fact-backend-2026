@@ -73,7 +73,6 @@ def workshops(request):
         return JsonResponse({"message": "Method not allowed"}, status=400)
 
 
-@csrf_exempt
 def workshops_bulk(request):
     """
     POST: Bulk upload workshops from Excel file (admin only)
