@@ -67,8 +67,13 @@ def workshops(request):
         except json.JSONDecodeError:
             return JsonResponse({"message": "Invalid JSON"}, status=400)
     elif request.method == "GET":
-        data = django_serializers.serialize("json", Workshop.objects.all())
-        return HttpResponse(data, content_type="application/json")
+        from django.db.models import Count
+        workshops = Workshop.objects.annotate(registration_count=Count('registration'))
+        serialized = django_serializers.serialize("json", workshops)
+        data = json.loads(serialized)
+        for d, w in zip(data, workshops):
+            d["fields"]["registration_count"] = w.registration_count
+        return HttpResponse(json.dumps(data), content_type="application/json")
     else:
         return JsonResponse({"message": "Method not allowed"}, status=400)
 
