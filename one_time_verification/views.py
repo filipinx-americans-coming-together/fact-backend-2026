@@ -7,6 +7,7 @@ from django.shortcuts import render
 from django.core.mail import send_mail
 from django.utils import timezone
 from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
 
 from one_time_verification.models import PendingVerification
 
@@ -30,7 +31,7 @@ def request_verification(request):
 
         try:
             validate_email(email)
-        except:
+        except ValidationError:
             return JsonResponse({"message": "Invalid email"}, status=400)
 
         if not email_subject or email_subject == "":

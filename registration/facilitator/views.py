@@ -7,6 +7,7 @@ from django.http import HttpResponse, JsonResponse
 from django.core import serializers as django_serializers
 from django.contrib.auth.models import User
 from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
 from django.contrib.auth import login, authenticate
 from django.utils import timezone
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
@@ -67,7 +68,7 @@ def facilitators(request):
         if email and len(email) > 0:
             try:
                 validate_email(email)
-            except:
+            except ValidationError:
                 return JsonResponse({"message": "Invalid email"}, status=400)
 
             if email != user.email and User.objects.filter(email=email).exists():
@@ -84,7 +85,7 @@ def facilitators(request):
             try:
                 validate_password(new_password)
                 user.set_password(new_password)
-            except:
+            except ValidationError:
                 return JsonResponse(
                     {"message": "Password is not strong enough"}, status=400
                 )
@@ -132,7 +133,7 @@ def facilitators(request):
 
         try:
             validate_email(email)
-        except:
+        except ValidationError:
             return JsonResponse({"message": "Invalid email"}, status=400)
 
         if User.objects.filter(email=email).exists():
@@ -140,7 +141,7 @@ def facilitators(request):
 
         try:
             validate_password(password)
-        except:
+        except ValidationError:
             return JsonResponse(
                 {"message": "Password is not strong enough"}, status=400
             )
@@ -227,12 +228,12 @@ def facilitator_account_set_up(request):
 
         try:
             validate_email(email)
-        except:
+        except ValidationError:
             return JsonResponse({"message": "Invalid email"}, status=400)
 
         try:
             validate_password(password)
-        except:
+        except ValidationError:
             return JsonResponse(
                 {"message": "Password is not strong enough"}, status=400
             )
@@ -248,7 +249,7 @@ def facilitator_account_set_up(request):
             user.set_password(password)
             user.email = email
             user.save()
-        except:
+        except (AccountSetUp.DoesNotExist, User.DoesNotExist):
             return JsonResponse({"message": "Invalid set up token"}, status=409)
 
         return JsonResponse({"message": "success"})

@@ -106,8 +106,6 @@ def agenda_items_id(request, id):
     else:
         return JsonResponse({"message": "method not allowed"}, status=405)
 
-
-@csrf_exempt
 def agenda_items_bulk(request):
     """
     POST: Bulk upload agenda items from Excel (admin only)
@@ -137,7 +135,7 @@ def agenda_items_bulk(request):
 
         try:
             agenda_df = pd.read_excel(file)
-        except:
+        except Exception:
             return JsonResponse({"message": "Error reading file"}, status=400)
 
         agenda_df = agenda_df.drop_duplicates()

@@ -67,13 +67,17 @@ def workshops(request):
         except json.JSONDecodeError:
             return JsonResponse({"message": "Invalid JSON"}, status=400)
     elif request.method == "GET":
-        data = django_serializers.serialize("json", Workshop.objects.all())
-        return HttpResponse(data, content_type="application/json")
+        from django.db.models import Count
+        workshops = Workshop.objects.annotate(registration_count=Count('registration'))
+        serialized = django_serializers.serialize("json", workshops)
+        data = json.loads(serialized)
+        for d, w in zip(data, workshops):
+            d["fields"]["registration_count"] = w.registration_count
+        return HttpResponse(json.dumps(data), content_type="application/json")
     else:
         return JsonResponse({"message": "Method not allowed"}, status=400)
 
 
-@csrf_exempt
 def workshops_bulk(request):
     """
     POST: Bulk upload workshops from Excel file (admin only)
@@ -109,7 +113,7 @@ def workshops_bulk(request):
 
         try:
             workshop_df = pd.read_excel(file)
-        except:
+        except Exception:
             return JsonResponse({"message": "Error reading file"}, status=400)
 
         workshop_df = workshop_df.drop_duplicates()
@@ -226,7 +230,7 @@ def workshops_bulk(request):
             try:
                 cap = int(row["preferred_cap"])
                 workshop.preferred_cap = cap
-            except:
+            except (ValueError, TypeError):
                 pass
 
             workshop.save()
@@ -286,7 +290,7 @@ def workshops_bulk(request):
                 try:
                     cap = int(row["preferred_cap"])
                     workshop.preferred_cap = cap
-                except:
+                except (ValueError, TypeError):
                     pass
 
                 workshop.save()

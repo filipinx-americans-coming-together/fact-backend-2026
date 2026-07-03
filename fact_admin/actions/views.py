@@ -121,58 +121,31 @@ def delegate_sheet(request):
         )
 
     if request.method == "GET":
-        delegates = Delegate.objects.all().values()
-        df = pd.DataFrame.from_records(delegates)
-
-        for idx, row in df.iterrows():
-            # Handle missing user_id
-            if not pd.isna(row["user_id"]):
-                try:
-                    user = User.objects.get(pk=row["user_id"])
-                    df.at[idx, "first_name"] = user.first_name
-                    df.at[idx, "last_name"] = user.last_name
-                    df.at[idx, "email"] = user.email
-                except User.DoesNotExist:
-                    print(f"User with ID {row['user_id']} does not exist.")
-                    df.at[idx, "first_name"] = None
-                    df.at[idx, "last_name"] = None
-                    df.at[idx, "email"] = None
-            else:
-                df.at[idx, "first_name"] = None
-                df.at[idx, "last_name"] = None
-                df.at[idx, "email"] = None
-
-            # Handle missing school_id or other_school
-            if not pd.isna(row["school_id"]):
-                try:
-                    df.at[idx, "school"] = School.objects.get(pk=row["school_id"]).name
-                except School.DoesNotExist:
-                    df.at[idx, "school"] = None
-            elif row.get("other_school"):
-                df.at[idx, "school"] = row["other_school"]
-            else:
-                df.at[idx, "school"] = None
-
-            # Handle workshop registrations
-            registrations = Registration.objects.filter(delegate_id=row["id"])
-            for registration in registrations.values():
-                if not pd.isna(registration["workshop_id"]):
-                    try:
-                        workshop = Workshop.objects.get(pk=registration["workshop_id"])
-                        for i in range(1, 4):
-                            if workshop.session == i:
-                                df.at[idx, f"session_{i}"] = workshop.title
-                    except Workshop.DoesNotExist:
-                        print(f"Workshop with ID {registration['workshop_id']} does not exist.")
-                else:
-                    print(f"Skipping registration with NaN workshop_id for delegate {row['id']}.")
-
-        # Drop unwanted columns
-        df.drop(
-            ["id", "user_id", "other_school", "school_id", "date_created"],
-            axis=1,
-            inplace=True,
-        )
+        delegates = Delegate.objects.all().select_related("user", "school").prefetch_related("registration_set__workshop")
+        
+        records = []
+        for d in delegates:
+            record = {
+                "pronouns": d.pronouns,
+                "year": d.year,
+                "first_name": d.user.first_name if d.user else None,
+                "last_name": d.user.last_name if d.user else None,
+                "email": d.user.email if d.user else None,
+                "school": d.school.name if d.school else (d.other_school if d.other_school else None),
+                "session_1": None,
+                "session_2": None,
+                "session_3": None,
+            }
+            
+            for reg in d.registration_set.all():
+                if reg.workshop:
+                    session = reg.workshop.session
+                    if session in [1, 2, 3]:
+                        record[f"session_{session}"] = reg.workshop.title
+            
+            records.append(record)
+            
+        df = pd.DataFrame(records)
 
         # Save the Excel file
         file_path = "delegates.xlsx"
@@ -250,8 +223,6 @@ def location_sheet(request):
     else:
         return JsonResponse({"message": "method not allowed"}, status=405)
 
-
-@csrf_exempt
 def send_facilitator_links(request):
     """
     POST: Print (instead of send) individual login links to facilitators (admin only)

@@ -4,7 +4,6 @@ from django.http import HttpResponse, JsonResponse
 from registration.models import Location
 from django.core.exceptions import ValidationError
 from django.core import serializers as django_serializers
-from django.views.decorators.csrf import csrf_exempt
 
 import pandas as pd
 
@@ -72,7 +71,7 @@ def locations(request):
             return HttpResponse(data, content_type="application/json", status=201)
         except ValidationError as e:
             return JsonResponse({"message": str(e)}, status=400)
-        except:
+        except Exception:
             return JsonResponse({"message": "INVALID ERROR"}, status=405)
     elif request.method == "GET":
         data = django_serializers.serialize("json", Location.objects.all())
@@ -134,8 +133,6 @@ def location_id(request, id):
     else:
         return JsonResponse({"message": "Method not allowed"}, status=405)
 
-
-@csrf_exempt
 def locations_bulk(request):
     """
     POST: Bulk upload locations from Excel file (admin only)
@@ -167,7 +164,7 @@ def locations_bulk(request):
 
         try:
             location_df = pd.read_excel(file)
-        except:
+        except Exception:
             return JsonResponse({"message": "Error reading file"}, status=400)
 
         location_df = location_df.drop_duplicates()

@@ -1,13 +1,17 @@
 import json
+import environ
+
 from django.http import HttpResponse, JsonResponse
 from django.core import serializers as django_serializers
 from django.contrib.auth.models import User
 from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
 from django.contrib.auth import authenticate, login, logout
 from django.core.mail import send_mail
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.utils import timezone
 from django.contrib.auth.password_validation import validate_password
+from django.db import transaction
 
 from registration import serializers
 from registration.models import (
@@ -21,7 +25,6 @@ from registration.models import (
     Workshop,
 )
 
-import environ
 
 env = environ.Env()
 environ.Env.read_env()
@@ -68,7 +71,6 @@ def delegate_me(request):
         workshop_3_id = data.get("workshop_3_id")
 
         workshop_ids = [workshop_1_id, workshop_2_id, workshop_3_id]
-        print(workshop_ids)
 
         # update data
 
@@ -81,7 +83,7 @@ def delegate_me(request):
         if email and len(email) > 0:
             try:
                 validate_email(email)
-            except:
+            except ValidationError:
                 return JsonResponse({"message": "Invalid email"}, status=400)
 
             if email != user.email and User.objects.filter(email=email).exists():
@@ -98,7 +100,7 @@ def delegate_me(request):
             try:
                 validate_password(new_password)
                 user.set_password(new_password)
-            except:
+            except ValidationError:
                 return JsonResponse(
                     {"message": "Password is not strong enough"}, status=400
                 )
@@ -213,7 +215,7 @@ def delegates(request):
             try:
                 workshop = Workshop.objects.get(pk=int(workshop_id))
                 session = workshop.session
-            except:
+            except (Workshop.DoesNotExist, ValueError):
                 return JsonResponse(
                     {"message": "Requested workshop not found"}, status=404
                 )
@@ -245,7 +247,7 @@ def delegates(request):
         # check user exists
         try:
             user = User.objects.get(email=email)
-        except:
+        except User.DoesNotExist:
             return JsonResponse({"message": "User not found"}, status=404)
 
         delegate = user.delegate
@@ -253,14 +255,18 @@ def delegates(request):
         workshop_details = {}
 
         # set registration data
-        for workshop_id in workshop_ids:
-            workshop = Workshop.objects.get(pk=workshop_id)
+        try:
+            with transaction.atomic():
+                for workshop_id in workshop_ids:
+                    workshop = Workshop.objects.get(pk=workshop_id)
 
-            registration = Registration(delegate=delegate, workshop=workshop)
-            registration.save()
+                    registration = Registration(delegate=delegate, workshop=workshop)
+                    registration.save()
 
-            # save workshop names for email
-            workshop_details[workshop.session] = workshop.title
+                    # save workshop names for email
+                    workshop_details[workshop.session] = workshop.title
+        except Exception as e:
+            return JsonResponse({"message": "Server error during registration"}, status=500)
 
         # login
         login(request, user)
@@ -320,7 +326,7 @@ def create_delegate(request):
 
         try:
             validate_email(email)
-        except:
+        except ValidationError:
             return JsonResponse({"message": "Invalid email"}, status=400)
 
         if User.objects.filter(email=email).exists():
@@ -328,30 +334,32 @@ def create_delegate(request):
 
         try:
             validate_password(password)
-        except:
+        except ValidationError:
             return JsonResponse({"message": "Password is too weak"}, status=400)
 
         # set user data
-        user = User(username=email, email=email, first_name=f_name, last_name=l_name)
-        user.set_password(password)
+        try:
+            with transaction.atomic():
+                user = User(username=email, email=email, first_name=f_name, last_name=l_name)
+                user.set_password(password)
+                user.save()
 
-        user.save()
+                # set delegate data
+                delegate = Delegate(user=user, pronouns=pronouns, year=year)
 
-        # set delegate data
-        delegate = Delegate(user=user, pronouns=pronouns, year=year)
+                if school_id:
+                    if (
+                        str(school_id).isdigit()
+                        and School.objects.filter(pk=school_id).exists()
+                    ):
+                        delegate.school_id = school_id
+                elif other_school_name and len(other_school_name) > 0:
+                    delegate.other_school = other_school_name
+                    NewSchool.objects.create(name=other_school_name)
 
-        if school_id:
-            if (
-                str(school_id).isdigit()
-                and School.objects.filter(pk=school_id).exists()
-            ):
-                user.delegate.school_id = school_id
-        elif other_school_name and len(other_school_name) > 0:
-            user.delegate.other_school = other_school_name
-
-            NewSchool.objects.create(name=other_school_name)
-
-        delegate.save()
+                delegate.save()
+        except Exception as e:
+            return JsonResponse({"message": "Server error during registration"}, status=500)
 
         # login
         login(request, user)
@@ -427,7 +435,7 @@ def request_password_reset(request):
         # return "success" even if no connected user exists
         try:
             user = User.objects.get(email=email)
-        except:
+        except User.DoesNotExist:
             return JsonResponse(
                 {
                     "message": "If email is connected to account, reset password link has been sent"
@@ -494,7 +502,7 @@ def reset_password(request):
             user = User.objects.get(email=email)
             user.set_password(password)
             user.save()
-        except:
+        except (PasswordReset.DoesNotExist, User.DoesNotExist):
             return JsonResponse({"message": "Invalid reset token"}, status=409)
 
         return JsonResponse({"message": "success"})
