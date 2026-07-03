@@ -1,5 +1,9 @@
 # omit virtual environment folder
 venv
+.venv
+
+# omit vscode settings
+.vscode
 
 # omit env variables
 .env
