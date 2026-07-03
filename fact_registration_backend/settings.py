@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     "one_time_verification",
     "registration",
     "corsheaders",
+    "shibboleth_auth",
 ]
 
 MIDDLEWARE = [
@@ -179,3 +180,54 @@ else:
     EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
     EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
     EMAIL_USE_TLS = True
+
+# ---------------------------------------------------------------------------
+# Shibboleth / SAML SSO Configuration
+# ---------------------------------------------------------------------------
+
+# Mock mode: bypasses real UIUC IDP for local development
+SAML_MOCK_MODE = env.bool("SAML_MOCK_MODE", default=DEVELOPMENT_MODE)
+
+# SP (Service Provider) settings
+SAML_SP_BASE_URL = env("SHIBBOLETH_BASE_URL", default="http://localhost:8000")
+SAML_SP_ENTITY_ID = env(
+    "SAML_SP_ENTITY_ID",
+    default=f"{SAML_SP_BASE_URL}/shibboleth",
+)
+
+# Paths to self-signed SP certificates (for signing/encrypting SAML requests)
+SAML_SP_CERT_FILE = env(
+    "SAML_SP_CERT_FILE",
+    default=os.path.join(BASE_DIR, "saml", "sp-cert.pem"),
+)
+SAML_SP_KEY_FILE = env(
+    "SAML_SP_KEY_FILE",
+    default=os.path.join(BASE_DIR, "saml", "sp-key.pem"),
+)
+
+# IDP (Identity Provider) settings — UIUC defaults
+SAML_IDP_ENTITY_ID = env(
+    "SAML_IDP_ENTITY_ID",
+    default="urn:mace:incommon:uiuc.edu",
+)
+SAML_IDP_SSO_URL = env(
+    "SAML_IDP_SSO_URL",
+    default="https://shibboleth.illinois.edu/idp/profile/SAML2/Redirect/SSO",
+)
+SAML_IDP_SLO_URL = env(
+    "SAML_IDP_SLO_URL",
+    default="https://shibboleth.illinois.edu/idp/profile/SAML2/Redirect/SLO",
+)
+SAML_IDP_CERT = env("SAML_IDP_CERT", default="")
+
+# Frontend redirect after successful Shibboleth login
+SAML_FRONTEND_REDIRECT_URL = env(
+    "SHIBBOLETH_SUCCESS_REDIRECT_URL",
+    default="http://localhost:3000/registration-step-2",
+)
+
+# Mock mode user attributes (for local testing)
+SAML_MOCK_EPPN = env("SAML_MOCK_EPPN", default="testuser@illinois.edu")
+SAML_MOCK_EMAIL = env("SAML_MOCK_EMAIL", default="testuser@illinois.edu")
+SAML_MOCK_FIRST_NAME = env("SAML_MOCK_FIRST_NAME", default="Test")
+SAML_MOCK_LAST_NAME = env("SAML_MOCK_LAST_NAME", default="Illini")

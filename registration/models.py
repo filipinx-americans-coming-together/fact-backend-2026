@@ -101,6 +101,10 @@ class Delegate(models.Model):
         school: Associated school
         other_school: Custom school name if not in list
         date_created: Account creation timestamp
+        is_uiuc_verified: Whether this delegate was verified via Shibboleth SSO
+        uiuc_netid: The UIUC NetID (unique, set during Shibboleth login)
+        uiuc_eppn: The eduPersonPrincipalName from Shibboleth (e.g. netid@illinois.edu)
+        shibboleth_verified_at: Timestamp of Shibboleth verification
     """
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     pronouns = models.CharField(max_length=30, default="")
@@ -110,6 +114,12 @@ class Delegate(models.Model):
     )
     other_school = models.CharField(max_length=150, null=True, blank=True)
     date_created = models.DateTimeField(auto_now_add=True)
+
+    # Shibboleth / UIUC verification fields
+    is_uiuc_verified = models.BooleanField(default=False)
+    uiuc_netid = models.CharField(max_length=100, blank=True, null=True, unique=True)
+    uiuc_eppn = models.CharField(max_length=200, blank=True, null=True)
+    shibboleth_verified_at = models.DateTimeField(blank=True, null=True)
 
     def __str__(self):
         return f"{self.user.last_name}, {self.user.first_name} - {self.user.email}"

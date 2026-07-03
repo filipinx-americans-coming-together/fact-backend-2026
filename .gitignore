@@ -26,3 +26,7 @@ test_emails
 
 # omit pytest_cache
 .pytest_cache
+
+# Shibboleth SAML SP certificates (secrets — never commit)
+saml/sp-key.pem
+saml/sp-cert.pem

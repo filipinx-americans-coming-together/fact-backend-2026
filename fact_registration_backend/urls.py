@@ -33,6 +33,7 @@ urlpatterns = [
     path("registration/", include("registration.urls")),
     path("fact-admin/", include("fact_admin.urls")),
     path("verifications/", include("one_time_verification.urls")),
+    path("saml/", include("shibboleth_auth.urls")),
     path("csrf/", get_csrf),
 ]
 
