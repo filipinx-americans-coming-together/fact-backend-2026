@@ -30,3 +30,6 @@ test_emails
 # Shibboleth SAML SP certificates (secrets — never commit)
 saml/sp-key.pem
 saml/sp-cert.pem
+
+# Local planning docs — kept on disk for reference, not pushed
+docs/superpowers/
