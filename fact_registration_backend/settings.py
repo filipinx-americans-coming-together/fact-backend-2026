@@ -174,6 +174,11 @@ if "test" in sys.argv:
     print("using file email backend")
     EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
     EMAIL_FILE_PATH = os.path.join(BASE_DIR, "test_emails")
+elif DEVELOPMENT_MODE:
+    # Local dev server, not just test runs -- write emails to a file
+    # instead of trying real Gmail SMTP with placeholder credentials.
+    EMAIL_BACKEND = "django.core.mail.backends.filebased.EmailBackend"
+    EMAIL_FILE_PATH = os.path.join(BASE_DIR, "test_emails")
 else:
     EMAIL_HOST = "smtp.gmail.com"
     EMAIL_PORT = "587"
