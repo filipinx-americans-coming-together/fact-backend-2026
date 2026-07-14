@@ -72,6 +72,18 @@ def delegate_me(request):
 
         workshop_ids = [workshop_1_id, workshop_2_id, workshop_3_id]
 
+        # payment gate: only block if workshop IDs are actually being submitted
+        if any(workshop_ids) and (
+            user.delegate.payment_status != Delegate.PaymentStatus.PAID
+            or user.delegate.ticket_type not in (
+                Delegate.TicketType.WORKSHOP,
+                Delegate.TicketType.BUNDLE,
+            )
+        ):
+            return JsonResponse(
+                {"message": "Payment required before workshop registration"}, status=402
+            )
+
         # update data
 
         if f_name and len(f_name) > 0:
@@ -251,6 +263,14 @@ def delegates(request):
             return JsonResponse({"message": "User not found"}, status=404)
 
         delegate = user.delegate
+
+        if delegate.payment_status != Delegate.PaymentStatus.PAID or delegate.ticket_type not in (
+            Delegate.TicketType.WORKSHOP,
+            Delegate.TicketType.BUNDLE,
+        ):
+            return JsonResponse(
+                {"message": "Payment required before workshop registration"}, status=402
+            )
 
         workshop_details = {}
 
