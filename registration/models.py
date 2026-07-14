@@ -105,7 +105,22 @@ class Delegate(models.Model):
         uiuc_netid: The UIUC NetID (unique, set during Shibboleth login)
         uiuc_eppn: The eduPersonPrincipalName from Shibboleth (e.g. netid@illinois.edu)
         shibboleth_verified_at: Timestamp of Shibboleth verification
+        ticket_type: Which Eventbrite ticket tier this delegate purchased
+        payment_status: Current payment state, verified server-side against Eventbrite
+        eventbrite_order_id: The verified Eventbrite order ID (globally unique)
+        payment_verified_at: Timestamp of successful payment verification
     """
+
+    class TicketType(models.TextChoices):
+        VARIETY_SHOW = "variety_show", "Variety Show Only"
+        WORKSHOP = "workshop", "Workshop Only"
+        BUNDLE = "bundle", "Variety Show + Workshop Bundle"
+
+    class PaymentStatus(models.TextChoices):
+        UNPAID = "unpaid", "Unpaid"
+        PAID = "paid", "Paid"
+        REFUNDED = "refunded", "Refunded"
+
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     pronouns = models.CharField(max_length=30, default="")
     year = models.CharField(max_length=40, null=True, default="")
@@ -121,8 +136,40 @@ class Delegate(models.Model):
     uiuc_eppn = models.CharField(max_length=200, blank=True, null=True)
     shibboleth_verified_at = models.DateTimeField(blank=True, null=True)
 
+    # Eventbrite payment verification fields
+    ticket_type = models.CharField(
+        max_length=20, choices=TicketType.choices, null=True, blank=True
+    )
+    payment_status = models.CharField(
+        max_length=20, choices=PaymentStatus.choices, default=PaymentStatus.UNPAID
+    )
+    eventbrite_order_id = models.CharField(
+        max_length=100, null=True, blank=True, unique=True
+    )
+    payment_verified_at = models.DateTimeField(blank=True, null=True)
+
     def __str__(self):
         return f"{self.user.last_name}, {self.user.first_name} - {self.user.email}"
+
+
+class UIUCPromoCode(models.Model):
+    """
+    A single-use, tier-scoped Eventbrite discount code issued to a
+    Shibboleth-verified UIUC delegate. At most one live code per
+    (delegate, ticket_type) pair.
+    """
+    delegate = models.ForeignKey(Delegate, on_delete=models.CASCADE)
+    ticket_type = models.CharField(max_length=20, choices=Delegate.TicketType.choices)
+    code = models.CharField(max_length=100, unique=True)
+    eventbrite_discount_id = models.CharField(max_length=100)
+    issued_at = models.DateTimeField(auto_now_add=True)
+    redeemed_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        unique_together = ("delegate", "ticket_type")
+
+    def __str__(self):
+        return f"{self.code} ({self.delegate})"
 
 
 class Registration(models.Model):
