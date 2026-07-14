@@ -231,3 +231,20 @@ SAML_MOCK_EPPN = env("SAML_MOCK_EPPN", default="testuser@illinois.edu")
 SAML_MOCK_EMAIL = env("SAML_MOCK_EMAIL", default="testuser@illinois.edu")
 SAML_MOCK_FIRST_NAME = env("SAML_MOCK_FIRST_NAME", default="Test")
 SAML_MOCK_LAST_NAME = env("SAML_MOCK_LAST_NAME", default="Illini")
+
+# ---------------------------------------------------------------------------
+# Eventbrite Payment Verification Configuration
+# ---------------------------------------------------------------------------
+
+# Mock mode: bypasses the real Eventbrite API for local development,
+# mirroring SAML_MOCK_MODE above.
+EVENTBRITE_MOCK_MODE = env.bool("EVENTBRITE_MOCK_MODE", default=DEVELOPMENT_MODE)
+
+EVENTBRITE_API_TOKEN = env("EVENTBRITE_API_TOKEN", default="")
+EVENTBRITE_EVENT_ID = env("EVENTBRITE_EVENT_ID", default="mock-event-id")
+
+EVENTBRITE_TICKET_CLASS_IDS = {
+    "variety_show": env("EVENTBRITE_TICKET_CLASS_VARIETY_SHOW", default="mock-variety-show"),
+    "workshop": env("EVENTBRITE_TICKET_CLASS_WORKSHOP", default="mock-workshop"),
+    "bundle": env("EVENTBRITE_TICKET_CLASS_BUNDLE", default="mock-bundle"),
+}
