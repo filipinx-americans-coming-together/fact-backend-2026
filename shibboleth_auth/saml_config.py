@@ -46,10 +46,6 @@ def get_saml_settings():
                 "url": f"{base_url}/saml/acs/",
                 "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
             },
-            "singleLogoutService": {
-                "url": f"{base_url}/saml/sls/",
-                "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
-            },
             "NameIDFormat": "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
             "x509cert": sp_cert,
             "privateKey": sp_key,

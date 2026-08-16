@@ -204,3 +204,25 @@ class ShibbolethEndpointMethodTests(TestCase):
         """Status endpoint should reject POST requests."""
         response = self.client.post("/saml/status/")
         self.assertEqual(response.status_code, 405)
+
+
+class ShibbolethSPSettingsTests(TestCase):
+    """Test the python3-saml settings dict built by get_saml_settings()."""
+
+    def test_sp_has_no_single_logout_service(self):
+        """SP metadata must not advertise an SLO endpoint that has no route."""
+        from shibboleth_auth.saml_config import get_saml_settings
+
+        settings_dict = get_saml_settings()
+        self.assertNotIn("singleLogoutService", settings_dict["sp"])
+
+    def test_sp_still_has_acs(self):
+        """Removing SLO must not disturb the ACS entry."""
+        from shibboleth_auth.saml_config import get_saml_settings
+
+        settings_dict = get_saml_settings()
+        self.assertIn("assertionConsumerService", settings_dict["sp"])
+        self.assertEqual(
+            settings_dict["sp"]["assertionConsumerService"]["binding"],
+            "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
+        )
