@@ -33,3 +33,4 @@ saml/sp-cert.pem
 
 # Local planning docs — kept on disk for reference, not pushed
 docs/superpowers/
+.superpowers/
