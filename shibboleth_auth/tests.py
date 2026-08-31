@@ -257,3 +257,44 @@ class ShibbolethSPSettingsTests(TestCase):
             settings_dict["sp"]["assertionConsumerService"]["binding"],
             "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
         )
+
+    @override_settings(
+        SAML_SP_CERT="env-supplied-cert-content",
+        SAML_SP_KEY="env-supplied-key-content",
+        SAML_SP_CERT_FILE="/nonexistent/cert.pem",
+        SAML_SP_KEY_FILE="/nonexistent/key.pem",
+    )
+    def test_sp_credential_prefers_env_content_over_file(self):
+        """
+        A PaaS deploy has no writable cert files (gitignored, never in the
+        build) -- SAML_SP_CERT/SAML_SP_KEY env content must be used even
+        when the *_FILE paths are set to something that doesn't exist.
+        """
+        from shibboleth_auth.saml_config import get_saml_settings
+
+        settings_dict = get_saml_settings()
+        self.assertEqual(settings_dict["sp"]["x509cert"], "env-supplied-cert-content")
+        self.assertEqual(settings_dict["sp"]["privateKey"], "env-supplied-key-content")
+
+    @override_settings(SAML_SP_CERT="", SAML_SP_KEY="")
+    def test_sp_credential_falls_back_to_file_when_env_content_empty(self):
+        """Local dev: no env content set, falls back to the generated .pem files."""
+        from shibboleth_auth.saml_config import get_saml_settings
+
+        settings_dict = get_saml_settings()
+        self.assertIn("BEGIN CERTIFICATE", settings_dict["sp"]["x509cert"])
+        self.assertIn("BEGIN", settings_dict["sp"]["privateKey"])
+
+    @override_settings(
+        SAML_SP_CERT="",
+        SAML_SP_KEY="",
+        SAML_SP_CERT_FILE="/nonexistent/cert.pem",
+        SAML_SP_KEY_FILE="/nonexistent/key.pem",
+    )
+    def test_sp_credential_empty_when_neither_source_available(self):
+        """No env content and no real file -- resolves to empty, not a crash."""
+        from shibboleth_auth.saml_config import get_saml_settings
+
+        settings_dict = get_saml_settings()
+        self.assertEqual(settings_dict["sp"]["x509cert"], "")
+        self.assertEqual(settings_dict["sp"]["privateKey"], "")

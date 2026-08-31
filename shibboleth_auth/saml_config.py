@@ -9,6 +9,24 @@ import os
 from django.conf import settings
 
 
+def _sp_credential(content, file_path):
+    """
+    Resolve one SP credential (cert or key): prefer PEM content supplied
+    directly via settings (e.g. SAML_SP_CERT/SAML_SP_KEY env vars -- the
+    only option on a PaaS deploy with no writable, committed cert files),
+    falling back to reading it from disk when a file path is given and
+    exists (local dev, where saml/generate_certs.sh already wrote one).
+    """
+    if content:
+        return content
+
+    if file_path and os.path.exists(file_path):
+        with open(file_path, "r") as f:
+            return f.read()
+
+    return ""
+
+
 def get_saml_settings():
     """
     Build and return the python3-saml settings dictionary.
@@ -19,19 +37,14 @@ def get_saml_settings():
     """
     base_url = getattr(settings, "SAML_SP_BASE_URL", "http://localhost:8000")
 
-    sp_cert = ""
-    sp_key = ""
-
-    cert_file = getattr(settings, "SAML_SP_CERT_FILE", None)
-    key_file = getattr(settings, "SAML_SP_KEY_FILE", None)
-
-    if cert_file and os.path.exists(cert_file):
-        with open(cert_file, "r") as f:
-            sp_cert = f.read()
-
-    if key_file and os.path.exists(key_file):
-        with open(key_file, "r") as f:
-            sp_key = f.read()
+    sp_cert = _sp_credential(
+        getattr(settings, "SAML_SP_CERT", ""),
+        getattr(settings, "SAML_SP_CERT_FILE", None),
+    )
+    sp_key = _sp_credential(
+        getattr(settings, "SAML_SP_KEY", ""),
+        getattr(settings, "SAML_SP_KEY_FILE", None),
+    )
 
     saml_settings = {
         "strict": True,

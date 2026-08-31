@@ -206,7 +206,11 @@ SAML_SP_ENTITY_ID = env(
     default=f"{SAML_SP_BASE_URL}/shibboleth",
 )
 
-# Paths to self-signed SP certificates (for signing/encrypting SAML requests)
+# Paths to self-signed SP certificates (for signing/encrypting SAML requests).
+# Used as a fallback when the PEM content isn't supplied directly below --
+# convenient for local dev where saml/generate_certs.sh already writes these
+# files to disk, but doesn't help on a PaaS deploy pulled from GitHub, since
+# the files are (correctly) gitignored and never make it into that build.
 SAML_SP_CERT_FILE = env(
     "SAML_SP_CERT_FILE",
     default=os.path.join(BASE_DIR, "saml", "sp-cert.pem"),
@@ -215,6 +219,13 @@ SAML_SP_KEY_FILE = env(
     "SAML_SP_KEY_FILE",
     default=os.path.join(BASE_DIR, "saml", "sp-key.pem"),
 )
+
+# Raw PEM content, for environments with no writable/committed cert files
+# (e.g. DigitalOcean App Platform) -- paste the full contents of sp-cert.pem
+# / sp-key.pem as the env var value. Takes priority over *_FILE above when
+# non-empty; see shibboleth_auth/saml_config.py.
+SAML_SP_CERT = env("SAML_SP_CERT", default="")
+SAML_SP_KEY = env("SAML_SP_KEY", default="")
 
 # IDP (Identity Provider) settings — UIUC defaults
 SAML_IDP_ENTITY_ID = env(
