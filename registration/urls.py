@@ -40,6 +40,7 @@ urlpatterns = [
     path("delegate-status/", payment_views.delegate_status, name="delegate_status"),
     path("uiuc-promo-code/", payment_views.uiuc_promo_code, name="uiuc_promo_code"),
     path("verify-payment/", payment_views.verify_payment, name="verify_payment"),
+    path("delegates/claim-order/", payment_views.claim_order, name="claim_order"),
     path("schools/", school_views.schools, name="schools"),
     path("schools/bulk/", school_views.schools_bulk, name="schools_bulk"),
     path("schools/new/", school_views.new_schools, name="schools_new"),

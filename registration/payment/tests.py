@@ -19,7 +19,7 @@ class DelegateStatusGETTest(TestCase):
 
     def test_authenticated_no_promo_codes(self):
         user = User.objects.create_user(username="a@a.com", email="a@a.com", password="password123")
-        Delegate.objects.create(user=user, is_uiuc_verified=True, uiuc_netid="jsmith2")
+        Delegate.objects.create(user=user, is_uiuc_verified=True, uiuc_targeted_id="jsmith2")
         self.client.login(username="a@a.com", password="password123")
 
         response = self.client.get(self.url)
@@ -31,7 +31,7 @@ class DelegateStatusGETTest(TestCase):
 
     def test_authenticated_with_unredeemed_promo(self):
         user = User.objects.create_user(username="a@a.com", email="a@a.com", password="password123")
-        delegate = Delegate.objects.create(user=user, is_uiuc_verified=True, uiuc_netid="jsmith2")
+        delegate = Delegate.objects.create(user=user, is_uiuc_verified=True, uiuc_targeted_id="jsmith2")
         UIUCPromoCode.objects.create(
             delegate=delegate,
             ticket_type=Delegate.TicketType.WORKSHOP,
@@ -65,7 +65,7 @@ class UIUCPromoCodePOSTTest(TestCase):
 
     def test_rejects_invalid_ticket_type(self):
         user = User.objects.create_user(username="a@a.com", email="a@a.com", password="password123")
-        Delegate.objects.create(user=user, is_uiuc_verified=True, uiuc_netid="jsmith2")
+        Delegate.objects.create(user=user, is_uiuc_verified=True, uiuc_targeted_id="jsmith2")
         self.client.login(username="a@a.com", password="password123")
 
         response = self.client.post(self.url, {"ticket_type": "not_a_tier"}, content_type="application/json")
@@ -73,18 +73,18 @@ class UIUCPromoCodePOSTTest(TestCase):
 
     def test_creates_code_first_time(self):
         user = User.objects.create_user(username="a@a.com", email="a@a.com", password="password123")
-        Delegate.objects.create(user=user, is_uiuc_verified=True, uiuc_netid="jsmith2")
+        Delegate.objects.create(user=user, is_uiuc_verified=True, uiuc_targeted_id="jsmith2")
         self.client.login(username="a@a.com", password="password123")
 
         response = self.client.post(self.url, {"ticket_type": "workshop"}, content_type="application/json")
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertTrue(data["code"].startswith("UIUC_jsmith2_"))
+        self.assertTrue(data["code"].startswith("UIUC_"))
         self.assertEqual(UIUCPromoCode.objects.count(), 1)
 
     def test_second_call_returns_same_code(self):
         user = User.objects.create_user(username="a@a.com", email="a@a.com", password="password123")
-        Delegate.objects.create(user=user, is_uiuc_verified=True, uiuc_netid="jsmith2")
+        Delegate.objects.create(user=user, is_uiuc_verified=True, uiuc_targeted_id="jsmith2")
         self.client.login(username="a@a.com", password="password123")
 
         first = self.client.post(self.url, {"ticket_type": "workshop"}, content_type="application/json").json()
@@ -100,7 +100,7 @@ class VerifyPaymentPOSTTest(TestCase):
         self.client = Client()
         self.url = reverse("registration:verify_payment")
         self.user = User.objects.create_user(username="a@a.com", email="a@a.com", password="password123")
-        self.delegate = Delegate.objects.create(user=self.user, is_uiuc_verified=True, uiuc_netid="jsmith2")
+        self.delegate = Delegate.objects.create(user=self.user, is_uiuc_verified=True, uiuc_targeted_id="jsmith2")
         self.client.login(username="a@a.com", password="password123")
 
     def test_requires_authentication(self):
@@ -136,7 +136,7 @@ class VerifyPaymentPOSTTest(TestCase):
 
     def test_order_with_someone_elses_promo_code_rejected(self):
         other_user = User.objects.create_user(username="b@b.com", email="b@b.com", password="password123")
-        other_delegate = Delegate.objects.create(user=other_user, is_uiuc_verified=True, uiuc_netid="bwilson")
+        other_delegate = Delegate.objects.create(user=other_user, is_uiuc_verified=True, uiuc_targeted_id="bwilson")
         UIUCPromoCode.objects.create(
             delegate=other_delegate,
             ticket_type=Delegate.TicketType.BUNDLE,

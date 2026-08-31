@@ -18,7 +18,10 @@ def serialize_workshop(workshop, include_fas=False):
     Optional: Include facilitator assistants.
     """
     workshop_data = serializers.serialize("json", [workshop])
-    location_data = serializers.serialize("json", [workshop.location])
+    # location is nullable (Workshop.location, null=True/blank=True) — Django's
+    # serializer crashes on serialize("json", [None]), so a workshop with no
+    # location assigned yet must serialize to an empty list, not attempt this.
+    location_data = serializers.serialize("json", [workshop.location] if workshop.location else [])
     registrations = Registration.objects.filter(workshop_id=workshop.pk)
     facilitator_registrations = FacilitatorRegistration.objects.filter(
         workshop_id=workshop.pk
@@ -76,7 +79,7 @@ def serialize_facilitator(facilitator):
     )
 
     registrations = FacilitatorRegistration.objects.none()
-    for name in facilitator.facilitators.split(","):
+    for name in facilitator.facilitators:
         registrations = registrations | FacilitatorRegistration.objects.filter(
             facilitator_name=name.strip()
         )

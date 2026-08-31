@@ -154,18 +154,24 @@ SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_HTTPONLY = False
 SESSION_COOKIE_HTTPONLY = True
 
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:3000",
-    "https://psauiuc.org",
-    "https://fact.psauiuc.org"
-]
+CSRF_TRUSTED_ORIGINS = env.list(
+    "CSRF_TRUSTED_ORIGINS",
+    default=[
+        "http://localhost:3000",
+        "https://psauiuc.org",
+        "https://fact.psauiuc.org",
+    ]
+)
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "https://psauiuc.org",
-    "https://fact.psauiuc.org"
-]
+CORS_ALLOWED_ORIGINS = env.list(
+    "CORS_ALLOWED_ORIGINS",
+    default=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://psauiuc.org",
+        "https://fact.psauiuc.org",
+    ]
+)
 CORS_EXPOSE_HEADERS = ["Content-Type", "X-CSRFToken"]
 CORS_ALLOW_CREDENTIALS = True
 
@@ -231,11 +237,15 @@ SAML_FRONTEND_REDIRECT_URL = env(
     default="http://localhost:3000/registration-step-2",
 )
 
-# Mock mode user attributes (for local testing)
-SAML_MOCK_EPPN = env("SAML_MOCK_EPPN", default="testuser@illinois.edu")
-SAML_MOCK_EMAIL = env("SAML_MOCK_EMAIL", default="testuser@illinois.edu")
-SAML_MOCK_FIRST_NAME = env("SAML_MOCK_FIRST_NAME", default="Test")
-SAML_MOCK_LAST_NAME = env("SAML_MOCK_LAST_NAME", default="Illini")
+# Mock mode user attributes (for local testing). Only two attributes are
+# real here — eduPersonTargetedID (opaque, persistent) and eduPersonAffiliation
+# — matching what UIUC's Shibboleth release actually sends. No identity-revealing
+# attributes (name/email/netid) are requested or available.
+SAML_MOCK_TARGETED_ID = env(
+    "SAML_MOCK_TARGETED_ID",
+    default="https://shibboleth.illinois.edu/idp!https://fact.psauiuc.org/shibboleth!mocktargetedid0000000000",
+)
+SAML_MOCK_AFFILIATION = env("SAML_MOCK_AFFILIATION", default="student;member")
 
 # ---------------------------------------------------------------------------
 # Eventbrite Payment Verification Configuration

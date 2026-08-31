@@ -11,6 +11,7 @@ Eventbrite API and should be verified against Eventbrite's live docs
 before this is used against a real event.
 """
 
+import hashlib
 import secrets
 import string
 
@@ -27,6 +28,17 @@ def _random_suffix(length=16):
     # ticket, not a cosmetic ID — it must not be predictable.
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _short_id(targeted_id, length=10):
+    # eduPersonTargetedID is opaque and can be long/URI-shaped — not
+    # something to paste directly into an Eventbrite discount code. This
+    # is a stable, short, non-reversible tag derived from it, purely for
+    # the code to look scoped-per-person in the Eventbrite dashboard; the
+    # actual one-time-use guarantee comes from Delegate.uiuc_targeted_id's
+    # DB uniqueness + UIUCPromoCode's one-per-(delegate, ticket_type), not
+    # from this tag.
+    return hashlib.sha256(targeted_id.encode()).hexdigest()[:length].upper()
 
 
 # ---------------------------------------------------------------------------
@@ -139,9 +151,11 @@ def _real_create_discount(ticket_class_id, code):
     return response.json()
 
 
-def create_discount(netid, ticket_type):
+def create_discount(targeted_id, ticket_type):
     """
-    Create a single-use, 100%-off discount code for the given ticket type.
+    Create a single-use, 100%-off discount code for the given ticket type,
+    tagged with a short hash of the delegate's opaque eduPersonTargetedID
+    (there's no netid/email to scope it to — see shibboleth_auth).
 
     Returns a dict: {code, eventbrite_discount_id}.
     Raises EventbriteError if the ticket type is unrecognized or the API fails.
@@ -150,7 +164,7 @@ def create_discount(netid, ticket_type):
     if ticket_class_id is None:
         raise EventbriteError(f"Unknown ticket type '{ticket_type}'")
 
-    code = f"UIUC_{netid}_{_random_suffix()}"
+    code = f"UIUC_{_short_id(targeted_id)}_{_random_suffix()}"
 
     if settings.EVENTBRITE_MOCK_MODE:
         return {"code": code, "eventbrite_discount_id": f"MOCK_DISCOUNT_{code}"}

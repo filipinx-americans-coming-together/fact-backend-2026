@@ -41,7 +41,7 @@ class DelegatePaymentFieldsTest(TestCase):
 class UIUCPromoCodeTest(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="a@a.com", email="a@a.com")
-        self.delegate = Delegate.objects.create(user=self.user, is_uiuc_verified=True, uiuc_netid="jsmith2")
+        self.delegate = Delegate.objects.create(user=self.user, is_uiuc_verified=True, uiuc_targeted_id="jsmith2")
 
     def test_create(self):
         promo = UIUCPromoCode.objects.create(

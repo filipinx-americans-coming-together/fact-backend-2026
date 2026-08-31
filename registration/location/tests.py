@@ -20,10 +20,11 @@ class LocationAPITestCase(TestCase):
         data = {
             "room_num": "102",
             "building": "Annex Building",
-            "capacity": 25
+            "capacity": 25,
+            "session": 1
         }
         response = self.client.post(self.location_url, json.dumps(data), content_type="application/json")
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 201)
 
     def test_post_location_invalid_json(self):
         response = self.client.post(self.location_url, "Invalid JSON", content_type="application/json")
@@ -34,7 +35,8 @@ class LocationAPITestCase(TestCase):
         data = {
             "room_num": "101",
             "building": "Main Building",
-            "capacity": 30
+            "capacity": 30,
+            "session": 0
         }
         response = self.client.post(self.location_url, json.dumps(data), content_type="application/json")
         self.assertContains(response, "Location already exists", status_code=409)

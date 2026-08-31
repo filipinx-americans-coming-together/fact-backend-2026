@@ -310,6 +310,60 @@ def delegates(request):
     else:
         return JsonResponse({"message": "Method not allowed"}, status=405)
 
+def _create_delegate_account(f_name, l_name, email, password, pronouns, year, school_id, other_school_name):
+    """
+    Validates delegate account fields and creates the User + Delegate.
+
+    Returns (user, None) on success, or (None, JsonResponse) on the first
+    validation failure — no DB writes happen before all validation passes.
+    Shared by create_delegate (account-first signup) and
+    registration.payment.views.claim_order (purchase-first signup), so the
+    two entry points can never validate an account differently.
+
+    Caller is responsible for wrapping in transaction.atomic() if this needs
+    to succeed/fail together with other writes (e.g. marking payment).
+    """
+    if not f_name or len(f_name) < 1:
+        return None, JsonResponse(
+            {"message": "First name must be at least one character"}, status=400
+        )
+
+    if not l_name or len(l_name) < 1:
+        return None, JsonResponse(
+            {"message": "Last name must be at least one character"}, status=400
+        )
+
+    try:
+        validate_email(email)
+    except ValidationError:
+        return None, JsonResponse({"message": "Invalid email"}, status=400)
+
+    if User.objects.filter(email=email).exists():
+        return None, JsonResponse({"message": "Email already in use"}, status=409)
+
+    try:
+        validate_password(password)
+    except ValidationError:
+        return None, JsonResponse({"message": "Password is too weak"}, status=400)
+
+    user = User(username=email, email=email, first_name=f_name, last_name=l_name)
+    user.set_password(password)
+    user.save()
+
+    delegate = Delegate(user=user, pronouns=pronouns, year=year)
+
+    if school_id:
+        if str(school_id).isdigit() and School.objects.filter(pk=school_id).exists():
+            delegate.school_id = school_id
+    elif other_school_name and len(other_school_name) > 0:
+        delegate.other_school = other_school_name
+        NewSchool.objects.create(name=other_school_name)
+
+    delegate.save()
+
+    return user, None
+
+
 def create_delegate(request):
     """
     POST: Create new delegate account
@@ -325,60 +379,21 @@ def create_delegate(request):
     if request.method == "POST":
         data = json.loads(request.body)
 
-        f_name = data.get("f_name")
-        l_name = data.get("l_name")
-        email = data.get("email")
-        password = data.get("password")
-        pronouns = data.get("pronouns")
-        year = data.get("year")
-        school_id = data.get("school_id")
-        other_school_name = data.get("other_school_name")
-
-        if not f_name or len(f_name) < 1:
-            return JsonResponse(
-                {"message": "First name must be at least one character"}, status=400
-            )
-
-        if not l_name or len(l_name) < 1:
-            return JsonResponse(
-                {"message": "Last name must be at least one character"}, status=400
-            )
-
-        try:
-            validate_email(email)
-        except ValidationError:
-            return JsonResponse({"message": "Invalid email"}, status=400)
-
-        if User.objects.filter(email=email).exists():
-            return JsonResponse({"message": "Email already in use"}, status=409)
-
-        try:
-            validate_password(password)
-        except ValidationError:
-            return JsonResponse({"message": "Password is too weak"}, status=400)
-
-        # set user data
         try:
             with transaction.atomic():
-                user = User(username=email, email=email, first_name=f_name, last_name=l_name)
-                user.set_password(password)
-                user.save()
-
-                # set delegate data
-                delegate = Delegate(user=user, pronouns=pronouns, year=year)
-
-                if school_id:
-                    if (
-                        str(school_id).isdigit()
-                        and School.objects.filter(pk=school_id).exists()
-                    ):
-                        delegate.school_id = school_id
-                elif other_school_name and len(other_school_name) > 0:
-                    delegate.other_school = other_school_name
-                    NewSchool.objects.create(name=other_school_name)
-
-                delegate.save()
-        except Exception as e:
+                user, error = _create_delegate_account(
+                    f_name=data.get("f_name"),
+                    l_name=data.get("l_name"),
+                    email=data.get("email"),
+                    password=data.get("password"),
+                    pronouns=data.get("pronouns"),
+                    year=data.get("year"),
+                    school_id=data.get("school_id"),
+                    other_school_name=data.get("other_school_name"),
+                )
+                if error:
+                    return error
+        except Exception:
             return JsonResponse({"message": "Server error during registration"}, status=500)
 
         # login

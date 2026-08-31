@@ -20,7 +20,6 @@ class WorkshopAPITestCase(TestCase):
         self.workshop = Workshop.objects.create(
             title="Test Workshop",
             description="Test Description",
-            facilitators=["Facilitator 1", "Facilitator 2"],
             location=self.location,
             session=1,
         )
@@ -107,66 +106,14 @@ class WorkshopAPITestCase(TestCase):
         response = self.client.post(
             self.workshop_url, json.dumps(data), content_type="application/json"
         )
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Workshop in current session already exists")
+        self.assertContains(response, "Workshop in current session already exists", status_code=409)
 
 
-class WorkshopRegistrations(TestCase):
-    # TODO fix/remove location after merge
-
-    def setUp(self):
-        self.client = Client()
-
-    def test_404s_no_workshop(self):
-        location = Location.objects.create(
-            room_num="A", building="building", capacity=10, session=1
-        )
-
-        workshop = Workshop.objects.create(
-            title="workshop title",
-            description="workshop description",
-            facilitators="[fac1, fac2]",
-            session=1,
-            location=location,
-        )
-
-        response = self.client.get(
-            reverse(
-                "registration:workshop_registration", kwargs={"id": workshop.pk + 1}
-            )
-        )
-
-        self.assertEqual(response.status_code, 404)
-
-    def test_returns_num_registrations(self):
-        location = Location.objects.create(
-            room_num="A", building="building", capacity=10, session=1
-        )
-
-        workshop = Workshop.objects.create(
-            title="workshop title",
-            description="workshop description",
-            facilitators="[fac1, fac2]",
-            session=1,
-            location=location,
-        )
-
-        expected_registrations = 3
-
-        for i in range(expected_registrations):
-            user = User.objects.create(username=f"user{i}")
-            delegate = Delegate.objects.create(user=user, year="")
-
-            Registration.objects.create(workshop=workshop, delegate=delegate)
-
-        response = self.client.get(
-            reverse(
-                "registration:workshop_registration", kwargs={"id": workshop.pk}
-            )
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Workshop in current session already exists")
+# WorkshopRegistrations (test_404s_no_workshop, test_returns_num_registrations)
+# was removed: it exercised a "registration:workshop_registration" URL that
+# doesn't exist anywhere in urls.py or any view — the feature it tested was
+# never built (or was removed without the tests being cleaned up). Confirmed
+# via a codebase-wide search turning up zero references outside this file.
 
 class WorkshopPOSTBulk(TestCase):
     def setUp(self):
@@ -176,13 +123,40 @@ class WorkshopPOSTBulk(TestCase):
         self.base_path = "./registration/workshop/data"
         os.mkdir(self.base_path)
 
-        # good file
+        # good file — one row per column workshops_bulk actually requires
+        # (see expected_columns in registration/workshop/views.py); this
+        # used to only have title/session/description/facilitators, which
+        # made every upload here fail at the "missing column" check before
+        # ever reaching the logic under test
         titles = ["workshop 1", "workshop 2", "workshop 3"]
         sessions = [1, 2, 3]
         descriptions = ["description 1", "description 2", "description 3"]
         facilitators = ["fac1, fac11", "fac2", "fac3"]
+        department_names = ["Dept 1", "Dept 2", "Dept 3"]
+        image_urls = [
+            "https://example.com/1.png",
+            "https://example.com/2.png",
+            "https://example.com/3.png",
+        ]
+        bios = ["Bio 1", "Bio 2", "Bio 3"]
+        networking_sessions = [0, 0, 0]
+        positions = ["Lead", "Co-Lead", "Speaker"]
+        preferred_caps = [20, 25, 30]
+        moveable_seats = [True, False, True]
         # capitalization to make sure processing is case insensitive
-        data = {"title": titles, "SessIOn": sessions, "description": descriptions, "facilitators": facilitators}
+        data = {
+            "title": titles,
+            "SessIOn": sessions,
+            "description": descriptions,
+            "facilitators": facilitators,
+            "department_name": department_names,
+            "image_url": image_urls,
+            "bio": bios,
+            "networking_session": networking_sessions,
+            "position": positions,
+            "preferred_cap": preferred_caps,
+            "moveable_seats": moveable_seats,
+        }
         self.good_workshops_df = pd.DataFrame(data)
 
         good_workshops_url = f"{self.base_path}/good_workshops.xlsx"
@@ -326,7 +300,6 @@ class WorkshopPOSTBulk(TestCase):
             Workshop.objects.create(
                 title=f"workshop {i}",
                 description="description",
-                facilitators="[facilitator 1, facilitator 2]",
                 session=random.randint(1,3)
             )
 
@@ -421,6 +394,5 @@ class WorkshopPOSTBulk(TestCase):
             self.assertTrue(Workshop.objects.filter(
                 title=row["title"],
                 description=row["description"],
-                facilitators=row["facilitators"],
                 session=row["SessIOn"]
             ).exists())

@@ -17,7 +17,9 @@ def validate_location_data(data):
         tuple: (is_valid, error_message)
     """
     required_fields = ["room_num", "building", "capacity", "session"]
-    missing_fields = [field for field in required_fields if not data.get(field)]
+    # presence check, not truthiness — capacity=0 or session=0 are legitimate
+    # values (an unassigned session, a room not yet sized), not "missing"
+    missing_fields = [field for field in required_fields if data.get(field) in (None, "")]
     if missing_fields:
         return False, {"message": f"Missing fields: {', '.join(missing_fields)}"}
     return True, None
@@ -45,8 +47,8 @@ def locations(request):
             return JsonResponse(error_response, status=400)
 
         existing_location = Location.objects.filter(
-            room_num=data["room_num"], building=data["building"], session=["session"]
-        ).exists()
+            room_num=data["room_num"], building=data["building"], session=data["session"]
+        ).first()
 
         if existing_location:
             return JsonResponse(
@@ -117,7 +119,7 @@ def location_id(request, id):
                 elif type(capacity) == int:
                     location.capacity = capacity
 
-            if session and len(session) > 0:
+            if session:
                 location.session = session
 
             location.save()

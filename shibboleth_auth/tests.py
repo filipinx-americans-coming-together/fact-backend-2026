@@ -10,14 +10,37 @@ from django.test import TestCase, Client, override_settings
 from django.contrib.auth.models import User
 
 from registration.models import Delegate
+from shibboleth_auth.views import _is_student_affiliation
+
+
+class AffiliationCheckTests(TestCase):
+    """Unit tests for _is_student_affiliation, independent of the login flow."""
+
+    def test_semicolon_joined_string_with_student(self):
+        self.assertTrue(_is_student_affiliation("student;member"))
+
+    def test_semicolon_joined_string_without_student(self):
+        self.assertFalse(_is_student_affiliation("staff;member"))
+
+    def test_list_of_values_with_student(self):
+        self.assertTrue(_is_student_affiliation(["member", "student"]))
+
+    def test_list_of_values_without_student(self):
+        self.assertFalse(_is_student_affiliation(["staff", "employee"]))
+
+    def test_case_insensitive(self):
+        self.assertTrue(_is_student_affiliation("Student"))
+
+    def test_empty_or_none(self):
+        self.assertFalse(_is_student_affiliation(""))
+        self.assertFalse(_is_student_affiliation(None))
+        self.assertFalse(_is_student_affiliation([]))
 
 
 @override_settings(
     SAML_MOCK_MODE=True,
-    SAML_MOCK_EPPN="testuser@illinois.edu",
-    SAML_MOCK_EMAIL="testuser@illinois.edu",
-    SAML_MOCK_FIRST_NAME="Test",
-    SAML_MOCK_LAST_NAME="Illini",
+    SAML_MOCK_TARGETED_ID="mock-targeted-id-abc123",
+    SAML_MOCK_AFFILIATION="student;member",
     SAML_FRONTEND_REDIRECT_URL="http://localhost:3000/registration-step-2",
 )
 class ShibbolethMockLoginTests(TestCase):
@@ -35,51 +58,37 @@ class ShibbolethMockLoginTests(TestCase):
             "http://localhost:3000/registration-step-2",
         )
 
-    def test_login_creates_user(self):
-        """Mock login should create a Django User."""
+    def test_login_creates_user_and_delegate(self):
+        """Mock login should create a Django User + verified Delegate keyed by targeted_id."""
         self.client.get("/saml/login/")
-        self.assertTrue(
-            User.objects.filter(email="testuser@illinois.edu").exists()
-        )
-
-    def test_login_creates_delegate(self):
-        """Mock login should create a Delegate with UIUC verification."""
-        self.client.get("/saml/login/")
-        user = User.objects.get(email="testuser@illinois.edu")
-        delegate = Delegate.objects.get(user=user)
+        delegate = Delegate.objects.get(uiuc_targeted_id="mock-targeted-id-abc123")
         self.assertTrue(delegate.is_uiuc_verified)
-        self.assertEqual(delegate.uiuc_netid, "testuser")
-        self.assertEqual(delegate.uiuc_eppn, "testuser@illinois.edu")
+        self.assertEqual(delegate.uiuc_affiliation, "student;member")
         self.assertIsNotNone(delegate.shibboleth_verified_at)
 
-    def test_login_sets_user_name(self):
-        """Mock login should set first and last name from SAML attributes."""
+    def test_login_does_not_set_real_name_or_email(self):
+        """No identity attributes are available from Shibboleth — the User
+        record must be a placeholder the delegate fills in themselves later."""
         self.client.get("/saml/login/")
-        user = User.objects.get(email="testuser@illinois.edu")
-        self.assertEqual(user.first_name, "Test")
-        self.assertEqual(user.last_name, "Illini")
+        delegate = Delegate.objects.get(uiuc_targeted_id="mock-targeted-id-abc123")
+        self.assertEqual(delegate.user.email, "")
+        self.assertEqual(delegate.user.first_name, "")
+        self.assertEqual(delegate.user.last_name, "")
 
-    def test_login_reuses_existing_user(self):
-        """If a user with that email already exists, link to them."""
-        existing = User.objects.create_user(
-            username="testuser@illinois.edu",
-            email="testuser@illinois.edu",
-            password="oldpassword123!",
-            first_name="Existing",
-            last_name="User",
-        )
-        Delegate.objects.create(user=existing, pronouns="they/them")
+    def test_login_reuses_existing_delegate_by_targeted_id(self):
+        """A second login with the same targeted_id must reuse the same
+        Delegate/User row, not create a new one — this is what makes the
+        one-time-use promo code guarantee hold."""
+        self.client.get("/saml/login/")
+        first_count = User.objects.count()
 
         self.client.get("/saml/login/")
+        second_count = User.objects.count()
 
-        # Should still be only one user
+        self.assertEqual(first_count, second_count)
         self.assertEqual(
-            User.objects.filter(email="testuser@illinois.edu").count(), 1
+            Delegate.objects.filter(uiuc_targeted_id="mock-targeted-id-abc123").count(), 1
         )
-        # Delegate should now be verified
-        delegate = Delegate.objects.get(user=existing)
-        self.assertTrue(delegate.is_uiuc_verified)
-        self.assertEqual(delegate.uiuc_netid, "testuser")
 
     def test_login_creates_session(self):
         """After mock login, the user should be authenticated."""
@@ -88,6 +97,31 @@ class ShibbolethMockLoginTests(TestCase):
         data = response.json()
         self.assertTrue(data["is_authenticated"])
         self.assertTrue(data["is_uiuc_verified"])
+
+
+@override_settings(
+    SAML_MOCK_MODE=True,
+    SAML_MOCK_TARGETED_ID="mock-targeted-id-staff",
+    SAML_MOCK_AFFILIATION="staff;member",
+)
+class ShibbolethNonStudentAffiliationTests(TestCase):
+    """A successful Shibboleth login alone must not grant verification —
+    the affiliation has to actually include 'student'."""
+
+    def setUp(self):
+        self.client = Client()
+
+    def test_non_student_affiliation_is_not_verified(self):
+        self.client.get("/saml/login/")
+        delegate = Delegate.objects.get(uiuc_targeted_id="mock-targeted-id-staff")
+        self.assertFalse(delegate.is_uiuc_verified)
+
+    def test_status_reflects_non_verification(self):
+        self.client.get("/saml/login/")
+        response = self.client.get("/saml/status/")
+        data = response.json()
+        self.assertTrue(data["is_authenticated"])
+        self.assertFalse(data["is_uiuc_verified"])
 
 
 class ShibbolethStatusTests(TestCase):
@@ -120,27 +154,24 @@ class ShibbolethStatusTests(TestCase):
     def test_status_verified_delegate(self):
         """Verified UIUC delegate should return full verification info."""
         user = User.objects.create_user(
-            username="verified@illinois.edu",
-            email="verified@illinois.edu",
+            username="verified_delegate",
             password="testpass123!",
-            first_name="Verified",
-            last_name="Student",
         )
         from django.utils import timezone
         Delegate.objects.create(
             user=user,
             is_uiuc_verified=True,
-            uiuc_netid="verified",
-            uiuc_eppn="verified@illinois.edu",
+            uiuc_targeted_id="mock-targeted-id-xyz",
+            uiuc_affiliation="student;member",
             shibboleth_verified_at=timezone.now(),
         )
-        self.client.login(username="verified@illinois.edu", password="testpass123!")
+        self.client.login(username="verified_delegate", password="testpass123!")
         response = self.client.get("/saml/status/")
         data = response.json()
         self.assertTrue(data["is_authenticated"])
         self.assertTrue(data["is_uiuc_verified"])
-        self.assertEqual(data["netid"], "verified")
-        self.assertEqual(data["eppn"], "verified@illinois.edu")
+        self.assertEqual(data["targeted_id"], "mock-targeted-id-xyz")
+        self.assertEqual(data["affiliation"], "student;member")
 
     def test_status_non_verified_delegate(self):
         """Non-UIUC delegate should return is_uiuc_verified=False."""

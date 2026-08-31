@@ -39,14 +39,14 @@ class FacilitatorAPITestCase(TestCase):
             "f_name": "New",
             "l_name": "Facilitator",
             "email": "newfacilitator@example.com",
-            "password": "password123",
+            "password": "Xk9$mVq2pL7zW",  # "password123" fails CommonPasswordValidator
             "fa_name": "New Facilitator",
             "fa_contact": "987-654-3210",
             "workshops": []
         }
         response = self.client.post(self.facilitator_url, json.dumps(data), content_type="application/json")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(Facilitator.objects.count(), 2)  # 1 existing facilitator + 1 new facilitator
+        self.assertEqual(Facilitator.objects.count(), 5)  # 4 from setUp + 1 new facilitator
 
     def test_put_facilitator(self):
         self.client.login(username='facilitator1', password='password')
@@ -72,7 +72,7 @@ class FacilitatorAPITestCase(TestCase):
         response = self.client.delete(self.facilitator_url)
         self.assertEqual(response.status_code, 200)
         with self.assertRaises(Facilitator.DoesNotExist):
-            Facilitator.objects.get(pk=self.facilitator.pk)
+            Facilitator.objects.get(pk=self.facilitator1.pk)
 
     def test_post_facilitator_already_exists(self):
         data = {
@@ -162,7 +162,7 @@ class FacilitatorAPITestCase(TestCase):
         self.assertIn("Password is not strong enough", response.json().get("message", ""))
 
     def test_post_valid_with_workshops(self):
-        data = {"f_name": "Fac", "l_name": "Three", "email": "new2@example.com", "password": "password123", "workshops": [self.workshop.pk]}
+        data = {"f_name": "Fac", "l_name": "Three", "email": "new2@example.com", "password": "Xk9$mVq2pL7zW", "workshops": [self.workshop.pk]}
         response = self.client.post(self.facilitator_url, json.dumps(data), content_type="application/json")
         self.assertEqual(response.status_code, 200)
         new_user = User.objects.get(email="new2@example.com")
@@ -222,13 +222,20 @@ class FacilitatorAPITestCase(TestCase):
         self.assertIn("Invalid email", response.json().get("message", ""))
 
     def test_facilitator_account_set_up_invalid_token(self):
-        data = {"email": "facilitator2@example.com", "password": "password123", "token": "badtoken"}
+        # a strong, non-common password — this test targets the invalid-token
+        # branch specifically, which only runs after password-strength
+        # validation passes; "password123" is common enough to be rejected
+        # by CommonPasswordValidator first, masking the intended failure mode
+        data = {"email": "facilitator2@example.com", "password": "Xk9$mVq2pL7zW", "token": "badtoken"}
         response = self.client.post(self.setup_url, json.dumps(data), content_type="application/json")
         self.assertEqual(response.status_code, 409)
         self.assertIn("Invalid set up token", response.json().get("message", ""))
 
     def test_register_facilitator_missing_fields(self):
-        response = self.client.post(self.register_url, json.dumps({}), content_type="application/json")
+        # register_facilitator only handles PUT (see its docstring/method
+        # check) — GET is separately covered by
+        # test_register_facilitator_method_not_allowed below
+        response = self.client.put(self.register_url, json.dumps({}), content_type="application/json")
         self.assertEqual(response.status_code, 400)
         self.assertIn("Must provide facilitator name", response.json().get("message", ""))
 

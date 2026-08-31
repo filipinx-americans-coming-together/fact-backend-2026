@@ -203,7 +203,7 @@ def workshops_bulk(request):
                 facilitator = Facilitator(
                     user=user,
                     department_name=row["department_name"],
-                    facilitators=row["facilitators"],
+                    facilitators=[name.strip() for name in str(row["facilitators"]).split(",") if name.strip()],
                     image_url=row["image_url"],
                     bio=row["bio"],
                     attending_networking_session=row["networking_session"] == 1,
@@ -260,7 +260,7 @@ def workshops_bulk(request):
                 facilitator = Facilitator(
                     user=user,
                     department_name=row["department_name"],
-                    facilitators=row["facilitators"],
+                    facilitators=[name.strip() for name in str(row["facilitators"]).split(",") if name.strip()],
                     image_url=row["image_url"],
                     bio=row["bio"],
                     attending_networking_session=row["networking_session"] == 1,
@@ -299,10 +299,13 @@ def workshops_bulk(request):
                 facilitator=facilitator, workshop=workshop
             )
 
-        # set locations
-        set_locations(1)
-        set_locations(2)
-        set_locations(3)
+        # set locations — one call: set_locations() already loops over all
+        # three sessions internally. It previously took no meaningful
+        # parameter here (its `self`-named arg is only used for CLI-style
+        # error reporting), so calling it 3x with session numbers as that
+        # arg was redundant and passed the wrong type — see
+        # registration/management/commands/matchworkshoplocations.py
+        set_locations()
 
         # email facilitator password links
         subject = "FACT Facilitator Accounts"

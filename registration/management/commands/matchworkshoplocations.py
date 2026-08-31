@@ -19,7 +19,21 @@ env = environ.Env()
 environ.Env.read_env()
 
 
-def set_locations(self):
+def _report_error(reporter, message):
+    """
+    Logs a location-matching failure. `reporter` is the management Command
+    instance when called from `manage.py matchworkshoplocations` (has
+    .stdout/.style for colored CLI output); callers outside that context
+    (e.g. the workshops_bulk web view) pass None and get a plain print
+    instead of crashing on a missing .stdout attribute.
+    """
+    if reporter is not None and hasattr(reporter, "stdout"):
+        reporter.stdout.write(reporter.style.ERROR(message))
+    else:
+        print(message)
+
+
+def set_locations(reporter=None):
     # set all workshop locations as "unassigned"
     location_assignments = pd.DataFrame(columns=["workshop", "location"])
     location_assignments["workshop"] = [value["pk"] for value in Workshop.objects.all().values("pk")]
@@ -60,6 +74,16 @@ def set_locations(self):
         moveable_locations = locations[locations["moveable_seats"] == True]
 
         for idx, row in workshops[workshops["moveable_seats"] == True].iterrows():
+            # guard the case with zero moveable-seat locations at all — the
+            # while condition below accesses .iloc[0] on its first check,
+            # before the loop body's own bounds check ever runs
+            if len(moveable_locations) == 0:
+                _report_error(
+                    reporter,
+                    f"Not enough compatible moveable seating locations for session {i}",
+                )
+                return
+
             # if the number of registrations exceeds the number of seats, move on to the next location
             # if the location has already been assigned, move on to the next location
             # since workshops are sorted by registrations first, every other workshop after this will have more registrations
@@ -71,11 +95,10 @@ def set_locations(self):
             ):
                 location_idx += 1
 
-                if location_idx > len(moveable_locations):
-                    self.stdout.write(
-                        self.style.ERROR(
-                            f"Not enough compatible moveable seating locations for session {i}"
-                        )
+                if location_idx >= len(moveable_locations):
+                    _report_error(
+                        reporter,
+                        f"Not enough compatible moveable seating locations for session {i}",
                     )
                     return
 
@@ -101,6 +124,10 @@ def set_locations(self):
         location_idx = 0
 
         for idx, row in workshops[workshops["moveable_seats"] == False].iterrows():
+            if len(locations) == 0:
+                _report_error(reporter, f"Not enough compatible locations for session {i}")
+                return
+
             while (
                 locations.iloc[location_idx]["capacity"] < row["registrations"]
                 or locations.iloc[location_idx]["id"]
@@ -108,12 +135,8 @@ def set_locations(self):
             ):
                 location_idx += 1
 
-                if location_idx > len(locations):
-                    self.stdout.write(
-                        self.style.ERROR(
-                            f"Not enough compatible locations for session {i}"
-                        )
-                    )
+                if location_idx >= len(locations):
+                    _report_error(reporter, f"Not enough compatible locations for session {i}")
                     return
 
             location_assignments.loc[
@@ -154,16 +177,15 @@ def set_locations(self):
 
     location_idx = 0
     for idx, row in workshops.iterrows():
+        if location_idx >= len(locations):
+            _report_error(reporter, "Not enough compatible locations for session 3")
+            return
+
         location_assignments.loc[
             location_assignments["workshop"] == row["id"], "location"
         ] = locations.iloc[location_idx]["id"]
 
         location_idx += 1
-        if location_idx > len(locations):
-            self.stdout.write(
-                self.style.ERROR(f"Not enough compatible locations for session 3")
-            )
-            return
 
     # clear locations
     Workshop.objects.all().update(location=None)

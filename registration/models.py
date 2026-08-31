@@ -101,9 +101,14 @@ class Delegate(models.Model):
         school: Associated school
         other_school: Custom school name if not in list
         date_created: Account creation timestamp
-        is_uiuc_verified: Whether this delegate was verified via Shibboleth SSO
-        uiuc_netid: The UIUC NetID (unique, set during Shibboleth login)
-        uiuc_eppn: The eduPersonPrincipalName from Shibboleth (e.g. netid@illinois.edu)
+        is_uiuc_verified: Whether this delegate authenticated via Shibboleth AND
+            eduPersonAffiliation included "student" — not just "logged in"
+        uiuc_targeted_id: The opaque, persistent eduPersonTargetedID from Shibboleth.
+            Unique per delegate; re-login with the same ID reuses this row, which is
+            what makes UIUCPromoCode's one-code-per-delegate constraint a one-time-use
+            guarantee. Not derivable to a NetID or email — UIUC releases only this
+            plus eduPersonAffiliation, no identity-revealing attributes.
+        uiuc_affiliation: Raw eduPersonAffiliation value(s) from Shibboleth, for audit
         shibboleth_verified_at: Timestamp of Shibboleth verification
         ticket_type: Which Eventbrite ticket tier this delegate purchased
         payment_status: Current payment state, verified server-side against Eventbrite
@@ -132,8 +137,8 @@ class Delegate(models.Model):
 
     # Shibboleth / UIUC verification fields
     is_uiuc_verified = models.BooleanField(default=False)
-    uiuc_netid = models.CharField(max_length=100, blank=True, null=True, unique=True)
-    uiuc_eppn = models.CharField(max_length=200, blank=True, null=True)
+    uiuc_targeted_id = models.CharField(max_length=255, blank=True, null=True, unique=True)
+    uiuc_affiliation = models.CharField(max_length=255, blank=True, null=True)
     shibboleth_verified_at = models.DateTimeField(blank=True, null=True)
 
     # Eventbrite payment verification fields

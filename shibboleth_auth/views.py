@@ -9,8 +9,22 @@ Provides four endpoints:
 
 Supports a mock mode (SAML_MOCK_MODE=True) for local development
 that simulates a successful Shibboleth login without the real IDP.
+
+UIUC releases exactly two attributes to this SP, both privacy-preserving —
+no name, email, or NetID is ever available here:
+  - eduPersonTargetedID: an opaque, persistent, SP-scoped identifier.
+    Stable across logins for the same person, not derivable to a real
+    identity. This is what makes a delegate's UIUC verification (and
+    their one free-ticket promo code) a one-time thing.
+  - eduPersonAffiliation: e.g. "student;member". Used only to decide
+    whether to grant the free-ticket eligibility.
+Because there's no real name/email, Shibboleth login only proves "this
+is a currently-affiliated UIUC student" and creates a session — the
+delegate still fills in their own name/email afterward via the normal
+PUT /registration/delegate/me/ flow.
 """
 
+import hashlib
 import json
 import logging
 
@@ -25,6 +39,21 @@ from django.views.decorators.http import require_GET, require_POST
 from registration.models import Delegate
 
 logger = logging.getLogger(__name__)
+
+
+def _is_student_affiliation(affiliation):
+    """
+    eduPersonAffiliation is multi-valued in SAML (semicolon-joined once
+    flattened to a single string by python3-saml, or a list from
+    auth.get_attributes()). True if any value is "student".
+    """
+    if not affiliation:
+        return False
+    if isinstance(affiliation, (list, tuple)):
+        values = affiliation
+    else:
+        values = affiliation.replace(",", ";").split(";")
+    return "student" in (v.strip().lower() for v in values)
 
 
 # ---------------------------------------------------------------------------
@@ -50,56 +79,47 @@ def _prepare_saml_request(request):
 # Helper: find or create a User + Delegate from SAML attributes
 # ---------------------------------------------------------------------------
 
-def _get_or_create_shibboleth_user(eppn, email, first_name, last_name):
+def _get_or_create_shibboleth_user(targeted_id, affiliation):
     """
-    Given SAML attributes, find an existing user by email or create a new one.
-    Sets Shibboleth verification fields on the Delegate.
+    Given the opaque eduPersonTargetedID and eduPersonAffiliation, find the
+    Delegate previously linked to this ID (same person, prior login) or
+    create a new placeholder User for them — there's no real name/email to
+    use, so the delegate fills those in afterward through the normal
+    registration form.
+
+    is_uiuc_verified is only set True when the affiliation actually
+    includes "student"; a successful Shibboleth login alone is not enough.
 
     Returns the User instance.
     """
-    # Extract netid from eppn (e.g. "jsmith2@illinois.edu" → "jsmith2")
-    netid = eppn.split("@")[0] if "@" in eppn else eppn
+    is_student = _is_student_affiliation(affiliation)
 
-    # Try to find an existing user by email first
     try:
-        user = User.objects.get(email=email)
-    except User.DoesNotExist:
-        # Create a new user — use email as username (matches existing pattern)
-        user = User(
-            username=email,
-            email=email,
-            first_name=first_name,
-            last_name=last_name,
-        )
-        # Shibboleth users don't need a Django password — set unusable
-        user.set_unusable_password()
-        user.save()
-
-    # Ensure a Delegate profile exists
-    delegate, created = Delegate.objects.get_or_create(
-        user=user,
-        defaults={
-            "is_uiuc_verified": True,
-            "uiuc_netid": netid,
-            "uiuc_eppn": eppn,
-            "shibboleth_verified_at": timezone.now(),
-        },
-    )
-
-    if not created:
-        # Update existing delegate with Shibboleth info
-        delegate.is_uiuc_verified = True
-        delegate.uiuc_netid = netid
-        delegate.uiuc_eppn = eppn
+        delegate = Delegate.objects.get(uiuc_targeted_id=targeted_id)
+        user = delegate.user
+        delegate.is_uiuc_verified = is_student
+        delegate.uiuc_affiliation = affiliation
         delegate.shibboleth_verified_at = timezone.now()
         delegate.save()
+        return user
+    except Delegate.DoesNotExist:
+        pass
 
-    # Update user name if it was blank
-    if not user.first_name and first_name:
-        user.first_name = first_name
-    if not user.last_name and last_name:
-        user.last_name = last_name
+    # Placeholder username — no real identity attribute to key off of.
+    # Uniqueness/collision-resistance comes from hashing the (already
+    # unique) targeted_id, not from any UIUC-provided username.
+    username = "shib_" + hashlib.sha256(targeted_id.encode()).hexdigest()[:24]
+    user = User(username=username)
+    user.set_unusable_password()
     user.save()
+
+    Delegate.objects.create(
+        user=user,
+        is_uiuc_verified=is_student,
+        uiuc_targeted_id=targeted_id,
+        uiuc_affiliation=affiliation,
+        shibboleth_verified_at=timezone.now(),
+    )
 
     return user
 
@@ -113,12 +133,14 @@ def _mock_login(request):
     Mock SAML login: immediately creates/finds a test UIUC user and
     redirects to the frontend success URL. No real IDP interaction.
     """
-    mock_eppn = getattr(settings, "SAML_MOCK_EPPN", "testuser@illinois.edu")
-    mock_email = getattr(settings, "SAML_MOCK_EMAIL", "testuser@illinois.edu")
-    mock_first = getattr(settings, "SAML_MOCK_FIRST_NAME", "Test")
-    mock_last = getattr(settings, "SAML_MOCK_LAST_NAME", "Illini")
+    mock_targeted_id = getattr(
+        settings,
+        "SAML_MOCK_TARGETED_ID",
+        "https://shibboleth.illinois.edu/idp!https://fact.psauiuc.org/shibboleth!mocktargetedid0000000000",
+    )
+    mock_affiliation = getattr(settings, "SAML_MOCK_AFFILIATION", "student;member")
 
-    user = _get_or_create_shibboleth_user(mock_eppn, mock_email, mock_first, mock_last)
+    user = _get_or_create_shibboleth_user(mock_targeted_id, mock_affiliation)
     login(request, user)
 
     redirect_url = getattr(
@@ -127,7 +149,7 @@ def _mock_login(request):
         "http://localhost:3000/registration-step-2",
     )
 
-    logger.info("MOCK Shibboleth login for user: %s", mock_eppn)
+    logger.info("MOCK Shibboleth login for targeted_id: %s", mock_targeted_id)
 
     from django.shortcuts import redirect
     return redirect(redirect_url)
@@ -235,36 +257,36 @@ def saml_acs(request):
             status=401,
         )
 
-    # Extract attributes from the SAML assertion
+    # Extract attributes from the SAML assertion. UIUC releases exactly two
+    # attributes to this SP — eduPersonTargetedID and eduPersonAffiliation —
+    # see the module docstring. name_id is the fallback for targeted_id in
+    # case UIUC delivers it as a persistent NameID instead of/as well as an
+    # attribute (both are seen in the wild for eduPersonTargetedID); this
+    # hasn't been verified against the real UIUC IDP yet.
     attributes = auth.get_attributes()
     name_id = auth.get_nameid()
 
-    # UIUC Shibboleth attribute names
-    eppn = (
-        attributes.get("urn:oid:1.3.6.1.4.1.5923.1.1.1.6", [None])[0]  # eduPersonPrincipalName
-        or attributes.get("eppn", [None])[0]
+    targeted_id = (
+        attributes.get("urn:oid:1.3.6.1.4.1.5923.1.1.1.10", [None])[0]  # eduPersonTargetedID
+        or attributes.get("eduPersonTargetedID", [None])[0]
         or name_id
         or ""
     )
-    email = (
-        attributes.get("urn:oid:0.9.2342.19200300.100.1.3", [None])[0]  # mail
-        or attributes.get("mail", [None])[0]
-        or eppn  # fall back to eppn as email
-    )
-    first_name = (
-        attributes.get("urn:oid:2.5.4.42", [None])[0]  # givenName
-        or attributes.get("givenName", [None])[0]
-        or ""
-    )
-    last_name = (
-        attributes.get("urn:oid:2.5.4.4", [None])[0]  # sn (surname)
-        or attributes.get("sn", [None])[0]
-        or ""
+    affiliation = (
+        attributes.get("urn:oid:1.3.6.1.4.1.5923.1.1.1.1", [])  # eduPersonAffiliation
+        or attributes.get("eduPersonAffiliation", [])
     )
 
-    logger.info("SAML ACS: authenticated user eppn=%s email=%s", eppn, email)
+    if not targeted_id:
+        logger.error("SAML ACS: no eduPersonTargetedID (or NameID) in assertion")
+        return JsonResponse(
+            {"error": "SAML assertion missing eduPersonTargetedID"},
+            status=400,
+        )
 
-    user = _get_or_create_shibboleth_user(eppn, email, first_name, last_name)
+    logger.info("SAML ACS: authenticated targeted_id=%s affiliation=%s", targeted_id, affiliation)
+
+    user = _get_or_create_shibboleth_user(targeted_id, affiliation)
     login(request, user)
 
     redirect_url = getattr(
@@ -354,8 +376,8 @@ def saml_status(request):
             {
                 "is_authenticated": True,
                 "is_uiuc_verified": delegate.is_uiuc_verified,
-                "netid": delegate.uiuc_netid or None,
-                "eppn": delegate.uiuc_eppn or None,
+                "targeted_id": delegate.uiuc_targeted_id or None,
+                "affiliation": delegate.uiuc_affiliation or None,
                 "email": user.email,
                 "first_name": user.first_name,
                 "last_name": user.last_name,

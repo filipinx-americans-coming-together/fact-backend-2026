@@ -57,6 +57,8 @@ def facilitators(request):
         password = data.get("password")
         new_password = data.get("new_password")
         workshops = data.get("workshops", [])
+        fa_name = data.get("fa_name")
+        fa_contact = data.get("fa_contact")
 
         # update user data
         if f_name and len(f_name) > 0:
@@ -92,6 +94,12 @@ def facilitators(request):
 
         # update facilitator data
         facilitator = user.facilitator
+
+        if fa_name and len(fa_name) > 0:
+            facilitator.fa_name = fa_name
+
+        if fa_contact and len(fa_contact) > 0:
+            facilitator.fa_contact = fa_contact
 
         facilitator.save()
 

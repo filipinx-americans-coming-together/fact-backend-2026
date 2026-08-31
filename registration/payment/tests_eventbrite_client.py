@@ -51,12 +51,29 @@ class GetOrderMockTest(TestCase):
 
 @override_settings(EVENTBRITE_MOCK_MODE=True)
 class CreateDiscountMockTest(TestCase):
-    def test_creates_code_with_netid(self):
-        result = eventbrite_client.create_discount("jsmith2", "workshop")
-        self.assertIn("jsmith2", result["code"])
+    def test_creates_code_from_targeted_id(self):
+        result = eventbrite_client.create_discount("opaque-targeted-id-1", "workshop")
         self.assertTrue(result["code"].startswith("UIUC_"))
         self.assertTrue(result["eventbrite_discount_id"])
+        # the raw opaque ID itself must never appear in the code
+        self.assertNotIn("opaque-targeted-id-1", result["code"])
+
+    def test_same_targeted_id_gives_same_code_tag(self):
+        # the hash-derived middle segment is stable for the same targeted_id,
+        # even though the random suffix differs each call
+        result1 = eventbrite_client.create_discount("opaque-targeted-id-1", "workshop")
+        result2 = eventbrite_client.create_discount("opaque-targeted-id-1", "workshop")
+        tag1 = result1["code"].split("_")[1]
+        tag2 = result2["code"].split("_")[1]
+        self.assertEqual(tag1, tag2)
+
+    def test_different_targeted_ids_give_different_code_tags(self):
+        result1 = eventbrite_client.create_discount("opaque-targeted-id-1", "workshop")
+        result2 = eventbrite_client.create_discount("opaque-targeted-id-2", "workshop")
+        tag1 = result1["code"].split("_")[1]
+        tag2 = result2["code"].split("_")[1]
+        self.assertNotEqual(tag1, tag2)
 
     def test_unknown_ticket_type_raises(self):
         with self.assertRaises(EventbriteError):
-            eventbrite_client.create_discount("jsmith2", "not_a_real_tier")
+            eventbrite_client.create_discount("opaque-targeted-id-1", "not_a_real_tier")
