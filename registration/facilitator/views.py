@@ -9,6 +9,7 @@ from django.contrib.auth.models import User
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 from django.contrib.auth import login, authenticate
+from django.db import transaction
 from django.utils import timezone
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.contrib.auth.password_validation import validate_password
@@ -375,18 +376,27 @@ def register_facilitator(request):
         #         status=404,
         #     )
 
-        sessions = set()
-        for workshop in workshops:
-            if workshop:
-                workshop_obj = Workshop.objects.filter(pk=workshop).first()
+        requested_ids = sorted({int(workshop) for workshop in workshops if workshop})
 
-                if not workshop_obj:
-                    return JsonResponse(
-                        {"message": "Workshop not found"},
-                        status=404,
-                    )
+        # capacity check + write happen together under row locks (sorted by
+        # pk to keep lock order consistent across concurrent requests and
+        # avoid deadlocks) so a facilitator and a delegate racing for the
+        # last seat can't both pass the check before either writes — see
+        # IT Bugs FACT 2024 #6 ("why are we over capacity").
+        with transaction.atomic():
+            workshops_by_id = {
+                w.pk: w
+                for w in Workshop.objects.select_for_update().filter(pk__in=requested_ids)
+            }
 
-                if workshop_obj.pk in sessions:
+            if len(workshops_by_id) != len(requested_ids):
+                return JsonResponse({"message": "Workshop not found"}, status=404)
+
+            sessions = set()
+            for workshop_id in requested_ids:
+                workshop_obj = workshops_by_id[workshop_id]
+
+                if workshop_obj.session in sessions:
                     return JsonResponse(
                         {
                             "message": "Can not register for more than one workshop in a single session"
@@ -396,35 +406,31 @@ def register_facilitator(request):
 
                 sessions.add(workshop_obj.session)
 
-        # clear workshops
-        FacilitatorRegistration.objects.filter(
-            facilitator_name=facilitator_name
-        ).delete()
+            # clear workshops
+            FacilitatorRegistration.objects.filter(
+                facilitator_name=facilitator_name
+            ).delete()
 
-        registrations = []
+            registrations = []
 
-        for workshop in workshops:
-            if workshop:
-                workshop_obj = Workshop.objects.get(pk=int(workshop))
+            for workshop_id in requested_ids:
+                workshop_obj = workshops_by_id[workshop_id]
 
                 # workshop cap
                 capacity = (
-                    Registration.objects.filter(workshop_id=workshop)
-                    .count()
+                    Registration.objects.filter(workshop_id=workshop_id).count()
                     + FacilitatorRegistration.objects.filter(
-                        workshop_id=workshop
-                    )
-                    .exclude(facilitator_name=facilitator_name)
-                    .count()
+                        workshop_id=workshop_id
+                    ).count()
                 )
 
                 if capacity >= workshop_obj.location.capacity:
                     return JsonResponse(
                         {"message": f"{workshop_obj.title} is full"}, status=409
                     )
-                
+
                 registration = FacilitatorRegistration(
-                    facilitator_name=facilitator_name, workshop_id=workshop
+                    facilitator_name=facilitator_name, workshop_id=workshop_id
                 )
                 registration.save()
 

@@ -257,6 +257,9 @@ EVENTBRITE_MOCK_MODE = env.bool("EVENTBRITE_MOCK_MODE", default=DEVELOPMENT_MODE
 
 EVENTBRITE_API_TOKEN = env("EVENTBRITE_API_TOKEN", default="")
 EVENTBRITE_EVENT_ID = env("EVENTBRITE_EVENT_ID", default="mock-event-id")
+# Discount creation is organization-scoped (POST /organizations/{id}/discounts/),
+# not event-scoped — see registration/payment/eventbrite_client.py.
+EVENTBRITE_ORGANIZATION_ID = env("EVENTBRITE_ORGANIZATION_ID", default="mock-organization-id")
 
 EVENTBRITE_TICKET_CLASS_IDS = {
     "variety_show": env("EVENTBRITE_TICKET_CLASS_VARIETY_SHOW", default="mock-variety-show"),

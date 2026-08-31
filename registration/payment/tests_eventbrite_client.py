@@ -1,3 +1,5 @@
+from unittest.mock import Mock, patch
+
 from django.conf import settings
 from django.test import TestCase, override_settings
 
@@ -77,3 +79,64 @@ class CreateDiscountMockTest(TestCase):
     def test_unknown_ticket_type_raises(self):
         with self.assertRaises(EventbriteError):
             eventbrite_client.create_discount("opaque-targeted-id-1", "not_a_real_tier")
+
+
+@override_settings(
+    EVENTBRITE_MOCK_MODE=False,
+    EVENTBRITE_ORGANIZATION_ID="org-123",
+    EVENTBRITE_EVENT_ID="event-456",
+)
+class RealCreateDiscountRequestShapeTest(TestCase):
+    """
+    Locks in the Discounts request shape against the real Eventbrite API v3
+    spec: organization-scoped URL, JSON body (not form-encoded) nested
+    under "discount", with event_id inside the body since the URL itself
+    no longer carries it.
+    """
+
+    @patch("registration.payment.eventbrite_client.requests.post")
+    def test_posts_to_organization_scoped_url_with_nested_json_body(self, mock_post):
+        mock_post.return_value = Mock(ok=True, json=lambda: {"id": "discount-789"})
+
+        result = eventbrite_client.create_discount("opaque-targeted-id-1", "workshop")
+
+        args, kwargs = mock_post.call_args
+        self.assertEqual(args[0], "https://www.eventbriteapi.com/v3/organizations/org-123/discounts/")
+        self.assertNotIn("data", kwargs)
+        self.assertIn("json", kwargs)
+        discount = kwargs["json"]["discount"]
+        self.assertEqual(discount["event_id"], "event-456")
+        self.assertEqual(discount["ticket_class_ids"], [settings.EVENTBRITE_TICKET_CLASS_IDS["workshop"]])
+        self.assertEqual(result["eventbrite_discount_id"], "discount-789")
+
+    @patch("registration.payment.eventbrite_client.requests.post")
+    def test_raises_on_error_response(self, mock_post):
+        mock_post.return_value = Mock(ok=False, status_code=400)
+
+        with self.assertRaises(EventbriteError):
+            eventbrite_client.create_discount("opaque-targeted-id-1", "workshop")
+
+
+@override_settings(EVENTBRITE_MOCK_MODE=False)
+class RealGetOrderRequestShapeTest(TestCase):
+    @patch("registration.payment.eventbrite_client.requests.get")
+    def test_gets_order_by_id_url_with_attendees_expansion(self, mock_get):
+        mock_get.return_value = Mock(
+            ok=True,
+            status_code=200,
+            json=lambda: {
+                "id": "12345",
+                "status": "placed",
+                "event_id": "event-456",
+                "promo_code": "UIUC_ABC_XYZ",
+                "attendees": [{"ticket_class_id": "ticket-1"}],
+            },
+        )
+
+        order = eventbrite_client.get_order("12345")
+
+        args, kwargs = mock_get.call_args
+        self.assertEqual(args[0], "https://www.eventbriteapi.com/v3/orders/12345/")
+        self.assertEqual(kwargs["params"], {"expand": "attendees"})
+        self.assertEqual(order["ticket_class_id"], "ticket-1")
+        self.assertEqual(order["discount_code"], "UIUC_ABC_XYZ")

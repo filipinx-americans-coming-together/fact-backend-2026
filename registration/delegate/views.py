@@ -135,11 +135,24 @@ def delegate_me(request):
                 NewSchool.objects.create(name=other_school_name)
 
         # workshops
-        sessions = []
-        for workshop_id in workshop_ids:
-            if workshop_id:
-                workshop = Workshop.objects.get(pk=int(workshop_id))
-                session = Workshop.objects.get(pk=workshop_id).session
+        # capacity check + write happen together under row locks (sorted by
+        # pk to keep lock order consistent across concurrent requests and
+        # avoid deadlocks) so two delegates racing for the last seat can't
+        # both pass the check before either writes — see IT Bugs FACT 2024
+        # #6 ("why are we over capacity").
+        requested_ids = [int(w) for w in workshop_ids if w]
+        with transaction.atomic():
+            workshops_by_id = {
+                w.pk: w
+                for w in Workshop.objects.select_for_update().filter(
+                    pk__in=sorted(requested_ids)
+                )
+            }
+
+            sessions = []
+            for workshop_id in requested_ids:
+                workshop = workshops_by_id[workshop_id]
+                session = workshop.session
 
                 if session in sessions:
                     return JsonResponse(
@@ -166,17 +179,17 @@ def delegate_me(request):
                         {"message": f"{workshop.title} is full"}, status=409
                     )
 
-        if len(sessions) == 3:
-            # clear registered workshops
-            Registration.objects.filter(delegate=user.delegate).delete()
+            if len(sessions) == 3:
+                # clear registered workshops
+                Registration.objects.filter(delegate=user.delegate).delete()
 
-            # re register
-            for workshop_id in workshop_ids:
-                workshop = Workshop.objects.get(pk=workshop_id)
+                # re register
+                for workshop_id in requested_ids:
+                    registration = Registration(
+                        delegate=user.delegate, workshop=workshops_by_id[workshop_id]
+                    )
 
-                registration = Registration(delegate=user.delegate, workshop=workshop)
-
-                registration.save()
+                    registration.save()
 
         user.save()
         user.delegate.save()
@@ -222,40 +235,6 @@ def delegates(request):
                 {"message": "Must register for all three sessions"}, status=400
             )
 
-        sessions = []
-        for workshop_id in workshop_ids:
-            try:
-                workshop = Workshop.objects.get(pk=int(workshop_id))
-                session = workshop.session
-            except (Workshop.DoesNotExist, ValueError):
-                return JsonResponse(
-                    {"message": "Requested workshop not found"}, status=404
-                )
-
-            # session
-            if session in sessions:
-                return JsonResponse(
-                    {
-                        "message": "Can not register for multiple workshops in a single session"
-                    },
-                    status=400,
-                )
-
-            sessions.append(session)
-
-            # workshop cap
-            registrations = (
-                Registration.objects.filter(workshop_id=workshop_id).count()
-                + FacilitatorRegistration.objects.filter(
-                    workshop_id=workshop_id
-                ).count()
-            )
-
-            if registrations >= workshop.location.capacity:
-                return JsonResponse(
-                    {"message": f"{workshop.title} is full"}, status=409
-                )
-
         # check user exists
         try:
             user = User.objects.get(email=email)
@@ -274,18 +253,60 @@ def delegates(request):
 
         workshop_details = {}
 
-        # set registration data
+        # capacity check + write happen together under row locks (sorted by
+        # pk to keep lock order consistent across concurrent requests and
+        # avoid deadlocks) so two delegates racing for the last seat can't
+        # both pass the check before either writes — see IT Bugs FACT 2024
+        # #6 ("why are we over capacity").
         try:
             with transaction.atomic():
+                workshops_by_id = {
+                    w.pk: w
+                    for w in Workshop.objects.select_for_update().filter(
+                        pk__in=sorted(workshop_ids)
+                    )
+                }
+
+                if len(workshops_by_id) != len(set(workshop_ids)):
+                    return JsonResponse(
+                        {"message": "Requested workshop not found"}, status=404
+                    )
+
+                sessions = []
                 for workshop_id in workshop_ids:
-                    workshop = Workshop.objects.get(pk=workshop_id)
+                    workshop = workshops_by_id[workshop_id]
+
+                    if workshop.session in sessions:
+                        return JsonResponse(
+                            {
+                                "message": "Can not register for multiple workshops in a single session"
+                            },
+                            status=400,
+                        )
+
+                    sessions.append(workshop.session)
+
+                    registrations = (
+                        Registration.objects.filter(workshop_id=workshop_id).count()
+                        + FacilitatorRegistration.objects.filter(
+                            workshop_id=workshop_id
+                        ).count()
+                    )
+
+                    if registrations >= workshop.location.capacity:
+                        return JsonResponse(
+                            {"message": f"{workshop.title} is full"}, status=409
+                        )
+
+                for workshop_id in workshop_ids:
+                    workshop = workshops_by_id[workshop_id]
 
                     registration = Registration(delegate=delegate, workshop=workshop)
                     registration.save()
 
                     # save workshop names for email
                     workshop_details[workshop.session] = workshop.title
-        except Exception as e:
+        except Exception:
             return JsonResponse({"message": "Server error during registration"}, status=500)
 
         # login

@@ -4,11 +4,10 @@ discount-code generation. Supports EVENTBRITE_MOCK_MODE for local
 development without real Eventbrite credentials, mirroring
 shibboleth_auth's SAML_MOCK_MODE pattern.
 
-NOTE: field/parameter names used in the real-mode functions below
-(percent_off, quantity_available, order status values, the exact
-Discounts/Orders endpoint shapes) are our best guess at the real
-Eventbrite API and should be verified against Eventbrite's live docs
-before this is used against a real event.
+Endpoint shapes verified against Eventbrite's public API v3 spec
+(eventbrite-api-v3-public.apib): Order retrieval at GET /orders/{id}/,
+Discount creation at POST /organizations/{organization_id}/discounts/
+with a JSON body nested under "discount".
 """
 
 import hashlib
@@ -132,17 +131,20 @@ def get_order(order_id):
 # ---------------------------------------------------------------------------
 
 def _real_create_discount(ticket_class_id, code):
-    url = f"https://www.eventbriteapi.com/v3/events/{settings.EVENTBRITE_EVENT_ID}/discounts/"
+    url = f"https://www.eventbriteapi.com/v3/organizations/{settings.EVENTBRITE_ORGANIZATION_ID}/discounts/"
     headers = {"Authorization": f"Bearer {settings.EVENTBRITE_API_TOKEN}"}
     payload = {
-        "discount.code": code,
-        "discount.type": "coded",
-        "discount.percent_off": "100",
-        "discount.quantity_available": "1",
-        "discount.ticket_class_ids": [ticket_class_id],
+        "discount": {
+            "code": code,
+            "type": "coded",
+            "percent_off": "100",
+            "quantity_available": 1,
+            "event_id": settings.EVENTBRITE_EVENT_ID,
+            "ticket_class_ids": [ticket_class_id],
+        }
     }
     try:
-        response = requests.post(url, headers=headers, data=payload, timeout=10)
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
     except requests.RequestException as e:
         raise EventbriteError(f"Eventbrite request failed: {e}")
 

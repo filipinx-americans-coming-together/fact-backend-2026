@@ -5,7 +5,9 @@ from django.urls import reverse
 from django.contrib.auth.models import User
 
 from registration.models import Facilitator
+from registration.models import FacilitatorRegistration
 from registration.models import FacilitatorWorkshop
+from registration.models import Location
 from registration.models import Workshop
 
 
@@ -243,3 +245,47 @@ class FacilitatorAPITestCase(TestCase):
         response = self.client.get(self.register_url)
         self.assertEqual(response.status_code, 405)
         self.assertIn("method not allowed", response.json().get("message", ""))
+
+    def test_register_facilitator_success(self):
+        location = Location.objects.create(building="B", room_num="1", capacity=5, session=1)
+        workshop = Workshop.objects.create(title="Capped Workshop", description="d", session=1, location=location)
+
+        data = {"facilitator_name": "New Name", "workshops": [workshop.pk]}
+        response = self.client.put(self.register_url, json.dumps(data), content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            FacilitatorRegistration.objects.filter(
+                facilitator_name="New Name", workshop_id=workshop.pk
+            ).exists()
+        )
+
+    def test_register_facilitator_rejects_duplicate_session(self):
+        location_a = Location.objects.create(building="B", room_num="1", capacity=5, session=1)
+        location_b = Location.objects.create(building="B", room_num="2", capacity=5, session=1)
+        workshop_a = Workshop.objects.create(title="A", description="d", session=1, location=location_a)
+        workshop_b = Workshop.objects.create(title="B", description="d", session=1, location=location_b)
+
+        data = {"facilitator_name": "New Name", "workshops": [workshop_a.pk, workshop_b.pk]}
+        response = self.client.put(self.register_url, json.dumps(data), content_type="application/json")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("single session", response.json().get("message", ""))
+
+    def test_register_facilitator_rejects_full_workshop(self):
+        location = Location.objects.create(building="B", room_num="1", capacity=1, session=1)
+        workshop = Workshop.objects.create(title="Full Workshop", description="d", session=1, location=location)
+        FacilitatorRegistration.objects.create(facilitator_name="Existing", workshop_id=workshop.pk)
+
+        data = {"facilitator_name": "New Name", "workshops": [workshop.pk]}
+        response = self.client.put(self.register_url, json.dumps(data), content_type="application/json")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("is full", response.json().get("message", ""))
+
+    def test_register_facilitator_unknown_workshop(self):
+        data = {"facilitator_name": "New Name", "workshops": [999999]}
+        response = self.client.put(self.register_url, json.dumps(data), content_type="application/json")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("Workshop not found", response.json().get("message", ""))
