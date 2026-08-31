@@ -5,6 +5,7 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -21,6 +22,7 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
+        cache: 'pip'
     - name: Create and Activate Virtual Environment
       run: |
         python -m venv venv
@@ -33,11 +35,24 @@ jobs:
         pip install -r requirements.txt
     - name: Run Tests
       env:
-        SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        # Not a secret: this is the flag that tells settings.py to use an
+        # in-memory-equivalent SQLite DB and the *_MOCK_MODE defaults
+        # instead of expecting a real DATABASE_URL/Postgres connection —
+        # exactly what a CI runner needs, since it has none of those.
+        # Previously pulled from a GitHub secret that was never actually
+        # configured (`gh secret list` on this repo returns none), so every
+        # run failed at settings import before a single test executed —
+        # see CLAUDE.md's CI section.
+        DEVELOPMENT_MODE: "True"
+        # Matches what settings.py actually reads (env("DJANGO_SECRET_KEY", ...));
+        # the previous "SECRET_KEY" name here didn't match, so even a
+        # configured secret would have been silently ignored. Harmless
+        # either way since Django falls back to a generated key, but named
+        # correctly now in case this ever needs to be a real pinned secret.
+        DJANGO_SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
         EMAIL_HOST_USER: ${{ secrets.EMAIL_HOST_USER }}
         EMAIL_HOST_PASSWORD: ${{ secrets.EMAIL_HOST_PASSWORD }}
         RESET_PASSWORD_URL: ${{ secrets.RESET_PASSWORD_URL }}
         ACCOUNT_SETUP_URL: ${{ secrets.ACCOUNT_SETUP_URL }}
-        DEVELOPMENT_MODE: ${{ secrets.DEVELOPMENT_MODE }}
       run: |
         python manage.py test
