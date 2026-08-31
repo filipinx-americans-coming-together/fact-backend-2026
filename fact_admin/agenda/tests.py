@@ -274,6 +274,22 @@ class AgendaItemsPOST(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(AgendaItem.objects.all().count(), 0)
 
+    def test_creates_agenda_item_without_session_num(self):
+        # session_num is optional (e.g. a networking event not tied to a
+        # workshop session) — omitting it must not crash on int(None)
+        self.client.login(username=self.username, password=self.password)
+
+        data = dict(self.good_data)
+        del data["session_num"]
+
+        response = self.client.post(
+            self.url, json.dumps(data), content_type="application/json"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(AgendaItem.objects.all().count(), 1)
+        self.assertIsNone(AgendaItem.objects.first().session_num)
+
     def test_creates_agenda_item(self):
         self.client.login(username=self.username, password=self.password)
 

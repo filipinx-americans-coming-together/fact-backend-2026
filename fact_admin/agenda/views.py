@@ -70,7 +70,7 @@ def agenda_items(request):
         )
 
         # note this just ignores (no error) malformed session data
-        if int(session_num) in [1, 2, 3]:
+        if session_num and int(session_num) in [1, 2, 3]:
             new_agenda_item.session_num = int(session_num)
 
         new_agenda_item.save()
