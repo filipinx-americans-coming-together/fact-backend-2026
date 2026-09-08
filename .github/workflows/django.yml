@@ -33,6 +33,15 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+    - name: Generate throwaway SAML SP certs
+      # saml/sp-cert.pem and sp-key.pem are gitignored (the private key must
+      # never be committed), so a fresh checkout has neither file — but
+      # shibboleth_auth's tests cover the file-based fallback path in
+      # saml_config.py, which needs *some* real PEM pair on disk to read.
+      # These are throwaway, used only to satisfy that test; production
+      # never reads from disk at all (SAML_SP_CERT/SAML_SP_KEY env vars
+      # take priority — see CLAUDE.md's "cert-deployment gap: resolved").
+      run: bash saml/generate_certs.sh
     - name: Run Tests
       env:
         # None of these are real secrets required for tests to pass — they're
