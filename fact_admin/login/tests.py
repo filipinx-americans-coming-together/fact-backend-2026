@@ -68,6 +68,80 @@ class LoginPOST(TestCase):
         self.assertTrue(response.wsgi_request.user.is_authenticated)
 
 
+class BootstrapAdminLoginPOST(TestCase):
+    """
+    The one-time bootstrap path in login_admin: BOOTSTRAP_ADMIN_EMAIL logging
+    in successfully while zero FACTAdmins exist gets auto-granted the group,
+    and the path permanently disables itself the moment any FACTAdmin exists.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.url = reverse("fact_admin:login_admin")
+
+        self.bootstrap_password = "bootstrap-pass"
+        self.bootstrap_user = User(
+            username="fact.it@psauiuc.org", email="fact.it@psauiuc.org"
+        )
+        self.bootstrap_user.set_password(self.bootstrap_password)
+        self.bootstrap_user.save()
+
+    def test_bootstrap_grants_admin_when_none_exist(self):
+        self.assertFalse(User.objects.filter(groups__name="FACTAdmin").exists())
+
+        response = self.client.post(
+            self.url,
+            json.dumps(
+                {
+                    "username": "fact.it@psauiuc.org",
+                    "password": self.bootstrap_password,
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.bootstrap_user.refresh_from_db()
+        self.assertTrue(self.bootstrap_user.groups.filter(name="FACTAdmin").exists())
+
+    def test_bootstrap_does_not_fire_once_an_admin_exists(self):
+        other_admin = User(username="already-admin", email="other@example.com")
+        other_admin.set_password("password123")
+        other_admin.save()
+        group = Group.objects.create(name="FACTAdmin")
+        other_admin.groups.add(group)
+
+        response = self.client.post(
+            self.url,
+            json.dumps(
+                {
+                    "username": "fact.it@psauiuc.org",
+                    "password": self.bootstrap_password,
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.bootstrap_user.refresh_from_db()
+        self.assertFalse(self.bootstrap_user.groups.filter(name="FACTAdmin").exists())
+
+    def test_other_emails_do_not_trigger_bootstrap(self):
+        other_user = User(username="someone-else", email="someone-else@example.com")
+        other_user.set_password("password123")
+        other_user.save()
+
+        response = self.client.post(
+            self.url,
+            json.dumps({"username": "someone-else", "password": "password123"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        other_user.refresh_from_db()
+        self.assertFalse(other_user.groups.filter(name="FACTAdmin").exists())
+
+
 class MeGET(TestCase):
     def setUp(self):
         self.client = Client()
