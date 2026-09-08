@@ -165,6 +165,7 @@ def verify_payment(request):
 
             if matched_promo is not None:
                 matched_promo.redeemed_at = timezone.now()
+                matched_promo.redeemed_order_id = order_id
                 matched_promo.save()
     except IntegrityError:
         return JsonResponse({"message": "This order has already been used"}, status=409)

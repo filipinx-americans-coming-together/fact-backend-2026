@@ -131,6 +131,7 @@ class VerifyPaymentPOSTTest(TestCase):
 
         promo.refresh_from_db()
         self.assertIsNotNone(promo.redeemed_at)
+        self.assertEqual(promo.redeemed_order_id, "MOCK_ORDER_bundle_UIUC_jsmith2_AAAA")
         self.delegate.refresh_from_db()
         self.assertEqual(self.delegate.payment_status, Delegate.PaymentStatus.PAID)
 

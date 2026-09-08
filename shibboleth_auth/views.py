@@ -79,20 +79,57 @@ def _prepare_saml_request(request):
 # Helper: find or create a User + Delegate from SAML attributes
 # ---------------------------------------------------------------------------
 
-def _get_or_create_shibboleth_user(targeted_id, affiliation):
+def _get_or_create_shibboleth_user(request, targeted_id, affiliation):
     """
-    Given the opaque eduPersonTargetedID and eduPersonAffiliation, find the
-    Delegate previously linked to this ID (same person, prior login) or
-    create a new placeholder User for them — there's no real name/email to
-    use, so the delegate fills those in afterward through the normal
-    registration form.
+    Attach the opaque eduPersonTargetedID/eduPersonAffiliation to a
+    delegate account.
+
+    UIUC sign-in is now a verification step reached from partway through
+    the register flow (pick workshops, then optionally verify UIUC status
+    for a discount code) — not a way to log in or create an account, so
+    the expected caller already has an authenticated session with a
+    Delegate. In that case the targeted_id is attached directly to that
+    delegate; it is never used to switch the session to a different
+    account.
+
+    Falls back to the old find-or-create-placeholder behavior only when
+    there's no already-authenticated delegate (e.g. someone hits
+    /saml/login/ directly with no FACT account yet) — this keeps a cold
+    NetID click from erroring out, though the normal path is create an
+    account first, then verify.
 
     is_uiuc_verified is only set True when the affiliation actually
     includes "student"; a successful Shibboleth login alone is not enough.
 
-    Returns the User instance.
+    Returns (user, error): error is None on success, or a short machine
+    code string ("already_linked") when this targeted_id already belongs
+    to a different delegate — the caller redirects with that as a query
+    param rather than switching accounts out from under the delegate.
     """
     is_student = _is_student_affiliation(affiliation)
+
+    current_delegate = None
+    if request.user.is_authenticated:
+        try:
+            current_delegate = request.user.delegate
+        except Delegate.DoesNotExist:
+            current_delegate = None
+
+    if current_delegate is not None:
+        already_used_elsewhere = (
+            Delegate.objects.filter(uiuc_targeted_id=targeted_id)
+            .exclude(pk=current_delegate.pk)
+            .exists()
+        )
+        if already_used_elsewhere:
+            return request.user, "already_linked"
+
+        current_delegate.is_uiuc_verified = is_student
+        current_delegate.uiuc_targeted_id = targeted_id
+        current_delegate.uiuc_affiliation = affiliation
+        current_delegate.shibboleth_verified_at = timezone.now()
+        current_delegate.save()
+        return request.user, None
 
     try:
         delegate = Delegate.objects.get(uiuc_targeted_id=targeted_id)
@@ -101,7 +138,7 @@ def _get_or_create_shibboleth_user(targeted_id, affiliation):
         delegate.uiuc_affiliation = affiliation
         delegate.shibboleth_verified_at = timezone.now()
         delegate.save()
-        return user
+        return user, None
     except Delegate.DoesNotExist:
         pass
 
@@ -121,7 +158,7 @@ def _get_or_create_shibboleth_user(targeted_id, affiliation):
         shibboleth_verified_at=timezone.now(),
     )
 
-    return user
+    return user, None
 
 
 # ===========================================================================
@@ -140,18 +177,22 @@ def _mock_login(request):
     )
     mock_affiliation = getattr(settings, "SAML_MOCK_AFFILIATION", "student;member")
 
-    user = _get_or_create_shibboleth_user(mock_targeted_id, mock_affiliation)
-    login(request, user)
+    user, error = _get_or_create_shibboleth_user(request, mock_targeted_id, mock_affiliation)
 
     redirect_url = getattr(
         settings,
         "SAML_FRONTEND_REDIRECT_URL",
-        "http://localhost:3000/registration-step-2",
+        "http://localhost:3000/my-fact/register",
     )
 
-    logger.info("MOCK Shibboleth login for targeted_id: %s", mock_targeted_id)
-
     from django.shortcuts import redirect
+
+    if error:
+        logger.info("MOCK Shibboleth login rejected (%s) for targeted_id: %s", error, mock_targeted_id)
+        return redirect(f"{redirect_url}?uiuc_error={error}")
+
+    login(request, user)
+    logger.info("MOCK Shibboleth login for targeted_id: %s", mock_targeted_id)
     return redirect(redirect_url)
 
 
@@ -164,7 +205,7 @@ def _mock_acs(request):
     redirect_url = getattr(
         settings,
         "SAML_FRONTEND_REDIRECT_URL",
-        "http://localhost:3000/registration-step-2",
+        "http://localhost:3000/my-fact/register",
     )
     return redirect(redirect_url)
 
@@ -286,16 +327,21 @@ def saml_acs(request):
 
     logger.info("SAML ACS: authenticated targeted_id=%s affiliation=%s", targeted_id, affiliation)
 
-    user = _get_or_create_shibboleth_user(targeted_id, affiliation)
-    login(request, user)
+    user, error = _get_or_create_shibboleth_user(request, targeted_id, affiliation)
 
     redirect_url = getattr(
         settings,
         "SAML_FRONTEND_REDIRECT_URL",
-        "http://localhost:3000/registration-step-2",
+        "http://localhost:3000/my-fact/register",
     )
 
     from django.shortcuts import redirect
+
+    if error:
+        logger.info("SAML ACS: verification rejected (%s) for targeted_id=%s", error, targeted_id)
+        return redirect(f"{redirect_url}?uiuc_error={error}")
+
+    login(request, user)
     return redirect(redirect_url)
 
 

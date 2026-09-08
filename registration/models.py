@@ -169,6 +169,14 @@ class UIUCPromoCode(models.Model):
     eventbrite_discount_id = models.CharField(max_length=100)
     issued_at = models.DateTimeField(auto_now_add=True)
     redeemed_at = models.DateTimeField(blank=True, null=True)
+    redeemed_order_id = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="The Eventbrite order that redeemed this code, set alongside "
+                   "redeemed_at — an explicit audit trail so 'which order used "
+                   "this code' doesn't have to be inferred via the delegate FK.",
+    )
 
     class Meta:
         unique_together = ("delegate", "ticket_type")

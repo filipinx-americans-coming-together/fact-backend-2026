@@ -72,3 +72,48 @@ class RegistrationFlag(models.Model):
 
     def __str__(self):
         return f"{self.label} - {self.value}"
+
+
+class AdminPromotion(models.Model):
+    """
+    Pending FACTAdmin promotion, awaiting the target's email confirmation
+    click before the group is actually granted. Same shape as
+    registration.models.PasswordReset/AccountSetUp (token + expiration).
+    """
+    email = models.EmailField()
+    token = models.CharField(max_length=150)
+    expiration = models.DateTimeField()
+    requested_by = models.ForeignKey(
+        "auth.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        help_text="The FACTAdmin who requested this promotion, for audit",
+    )
+
+    def __str__(self):
+        return f"promote {self.email}"
+
+
+class AdminPasswordReset(models.Model):
+    """
+    Pending FACTAdmin password reset, awaiting the target admin's email
+    confirmation click before the new password is actually set. Requested
+    by a *different* FACTAdmin on the target's behalf — there is no
+    self-service admin password reset, since an admin login has no
+    "forgot password" context to key a self-service email off of the way
+    the delegate/facilitator flows do. Same token+expiration shape as
+    AdminPromotion.
+    """
+    email = models.EmailField()
+    token = models.CharField(max_length=150)
+    expiration = models.DateTimeField()
+    requested_by = models.ForeignKey(
+        "auth.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="requested_password_resets",
+        help_text="The FACTAdmin who requested this reset, for audit",
+    )
+
+    def __str__(self):
+        return f"reset password for {self.email}"

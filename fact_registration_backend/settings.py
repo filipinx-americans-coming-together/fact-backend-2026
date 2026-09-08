@@ -242,10 +242,13 @@ SAML_IDP_SLO_URL = env(
 )
 SAML_IDP_CERT = env("SAML_IDP_CERT", default="")
 
-# Frontend redirect after successful Shibboleth login
+# Frontend redirect after Shibboleth login/verification. UIUC sign-in is
+# reached from partway through /my-fact/register (verify UIUC status for a
+# discount code on an already-authenticated delegate, see
+# shibboleth_auth/views.py) — send them back there, not to profile/login.
 SAML_FRONTEND_REDIRECT_URL = env(
     "SHIBBOLETH_SUCCESS_REDIRECT_URL",
-    default="http://localhost:3000/registration-step-2",
+    default="http://localhost:3000/my-fact/register",
 )
 
 # Mock mode user attributes (for local testing). Only two attributes are

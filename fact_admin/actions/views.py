@@ -1,7 +1,9 @@
 import json
+from django.db import IntegrityError, transaction
 from django.http import FileResponse, HttpResponse, JsonResponse
 from django.core import serializers as django_serializers
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Group, User
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.core.mail import send_mail
@@ -9,7 +11,9 @@ import os
 
 import pandas as pd
 
-from fact_admin.models import RegistrationFlag
+from fact_admin.models import AdminPasswordReset, AdminPromotion, RegistrationFlag
+from registration import serializers
+from registration.delegate.views import _create_delegate_account, _lock_and_register_workshops
 from registration.models import Delegate, Location, Registration, School, Workshop, Facilitator, AccountSetUp
 
 # set workshop locations
@@ -325,3 +329,298 @@ def send_facilitator_links(request):
         )
     else:
         return JsonResponse({"message": "method not allowed"}, status=405)
+
+
+def promote_admin(request):
+    """
+    POST: Request that an existing registered user be promoted to FACTAdmin
+    (admin only). Sends a confirmation link to the target's email instead of
+    granting the group immediately — the promotion only takes effect once
+    they click it (see promote_admin_confirm below). Requires the target to
+    already have an account; there is no self-service admin signup.
+    """
+    if not request.user.groups.filter(name="FACTAdmin").exists():
+        return JsonResponse(
+            {"message": "Must be admin to make this request"}, status=403
+        )
+
+    if request.method != "POST":
+        return JsonResponse({"message": "method not allowed"}, status=405)
+
+    data = json.loads(request.body)
+    email = data.get("email")
+
+    if not email or len(email) == 0:
+        return JsonResponse({"message": "Must provide email"}, status=400)
+
+    try:
+        target = User.objects.get(email=email)
+    except User.DoesNotExist:
+        return JsonResponse(
+            {"message": "No account found with that email — they must create an account first"},
+            status=404,
+        )
+
+    if target.groups.filter(name="FACTAdmin").exists():
+        return JsonResponse({"message": "This user is already an admin"}, status=400)
+
+    token_generator = PasswordResetTokenGenerator()
+    token = token_generator.make_token(target)
+
+    promotion = AdminPromotion(
+        email=email,
+        token=token,
+        expiration=timezone.now() + timezone.timedelta(hours=24),
+        requested_by=request.user,
+    )
+    promotion.save()
+
+    confirm_url = f"{os.getenv('ADMIN_PROMOTION_URL')}/{token}"
+
+    subject = "FACT Admin Access Request"
+    body = (
+        f"Hi {target.first_name}. {request.user.first_name} {request.user.last_name} "
+        f"has requested that your FACT account be given admin access.\n\n"
+        f"If you'd like to accept, click the link below:\n\n{confirm_url}\n\n"
+        f"If you weren't expecting this, you can ignore this email — nothing happens "
+        f"until this link is clicked. This link will expire in 24 hours."
+    )
+    from_email = os.getenv("EMAIL_HOST_USER")
+    send_mail(subject, body, from_email, [email])
+
+    return JsonResponse({"message": f"Promotion request sent to {email}"})
+
+
+def promote_admin_confirm(request):
+    """
+    POST: Confirm a pending admin promotion using the token emailed by
+    promote_admin above. Not admin-gated — the token itself, known only to
+    whoever received the email, is the credential.
+    """
+    if request.method != "POST":
+        return JsonResponse({"message": "method not allowed"}, status=405)
+
+    data = json.loads(request.body)
+    token = data.get("token")
+
+    if not token or len(token) == 0:
+        return JsonResponse({"message": "Must provide token"}, status=400)
+
+    AdminPromotion.objects.filter(expiration__lt=timezone.now()).delete()
+
+    try:
+        promotion = AdminPromotion.objects.get(token=token)
+    except AdminPromotion.DoesNotExist:
+        return JsonResponse({"message": "Invalid or expired promotion link"}, status=409)
+
+    try:
+        target = User.objects.get(email=promotion.email)
+    except User.DoesNotExist:
+        promotion.delete()
+        return JsonResponse({"message": "That account no longer exists"}, status=404)
+
+    admin_group, _ = Group.objects.get_or_create(name="FACTAdmin")
+    target.groups.add(admin_group)
+    promotion.delete()
+
+    return JsonResponse({"message": "success"})
+
+
+def reset_admin_password(request):
+    """
+    POST: Request that another FACTAdmin's password be reset (admin only).
+    Sends a confirmation link to the target's email instead of resetting
+    the password immediately — the new password is only set once they
+    click it and choose one themselves (see reset_admin_password_confirm
+    below). There is deliberately no self-service path: an admin login
+    has no account context to key a "forgot password" email off of before
+    they've authenticated, so resets go through a peer admin instead.
+    """
+    if not request.user.groups.filter(name="FACTAdmin").exists():
+        return JsonResponse(
+            {"message": "Must be admin to make this request"}, status=403
+        )
+
+    if request.method != "POST":
+        return JsonResponse({"message": "method not allowed"}, status=405)
+
+    data = json.loads(request.body)
+    email = data.get("email")
+
+    if not email or len(email) == 0:
+        return JsonResponse({"message": "Must provide email"}, status=400)
+
+    try:
+        target = User.objects.get(email=email)
+    except User.DoesNotExist:
+        return JsonResponse({"message": "No account found with that email"}, status=404)
+
+    if not target.groups.filter(name="FACTAdmin").exists():
+        return JsonResponse(
+            {"message": "That account is not an admin"}, status=400
+        )
+
+    token_generator = PasswordResetTokenGenerator()
+    token = token_generator.make_token(target)
+
+    reset = AdminPasswordReset(
+        email=email,
+        token=token,
+        expiration=timezone.now() + timezone.timedelta(hours=24),
+        requested_by=request.user,
+    )
+    reset.save()
+
+    confirm_url = f"{os.getenv('ADMIN_PASSWORD_RESET_URL')}/{token}"
+
+    subject = "FACT Admin Password Reset"
+    body = (
+        f"Hi {target.first_name}. {request.user.first_name} {request.user.last_name} "
+        f"has requested a password reset for your FACT admin account.\n\n"
+        f"If you'd like to set a new password, click the link below:\n\n{confirm_url}\n\n"
+        f"If you weren't expecting this, you can ignore this email — nothing changes "
+        f"until this link is clicked and a new password is submitted. This link will "
+        f"expire in 24 hours."
+    )
+    from_email = os.getenv("EMAIL_HOST_USER")
+    send_mail(subject, body, from_email, [email])
+
+    return JsonResponse({"message": f"Password reset request sent to {email}"})
+
+
+def reset_admin_password_confirm(request):
+    """
+    POST: Confirm a pending admin password reset using the token emailed
+    by reset_admin_password above, and set the new password. Not
+    admin-gated — the token itself, known only to whoever received the
+    email, is the credential.
+    """
+    if request.method != "POST":
+        return JsonResponse({"message": "method not allowed"}, status=405)
+
+    data = json.loads(request.body)
+    token = data.get("token")
+    password = data.get("password")
+
+    if not token or len(token) == 0:
+        return JsonResponse({"message": "Must provide token"}, status=400)
+
+    if not password or len(password) == 0:
+        return JsonResponse({"message": "Must provide a new password"}, status=400)
+
+    AdminPasswordReset.objects.filter(expiration__lt=timezone.now()).delete()
+
+    try:
+        reset = AdminPasswordReset.objects.get(token=token)
+    except AdminPasswordReset.DoesNotExist:
+        return JsonResponse({"message": "Invalid or expired reset link"}, status=409)
+
+    try:
+        target = User.objects.get(email=reset.email)
+    except User.DoesNotExist:
+        reset.delete()
+        return JsonResponse({"message": "That account no longer exists"}, status=404)
+
+    target.set_password(password)
+    target.save()
+    reset.delete()
+
+    return JsonResponse({"message": "success"})
+
+
+def day_of_registration(request):
+    """
+    POST: Create a delegate account in person, at the door on the day of
+    the conference (admin only).
+
+    Trusts the admin's own visual confirmation of a purchased ticket
+    (checked at the door) instead of looking up an Eventbrite order —
+    day-of sales are the one path that deliberately does not verify
+    against Eventbrite. Reuses _create_delegate_account and the same
+    capacity-locked workshop registration every other signup path uses, so
+    a day-of delegate is registered exactly as safely as an online one.
+    Deliberately does not call login() — this is the admin's own session,
+    not the new delegate's.
+    """
+    if not request.user.groups.filter(name="FACTAdmin").exists():
+        return JsonResponse(
+            {"message": "Must be admin to make this request"}, status=403
+        )
+
+    if request.method != "POST":
+        return JsonResponse({"message": "method not allowed"}, status=405)
+
+    data = json.loads(request.body)
+
+    ticket_type = data.get("ticket_type")
+    if ticket_type not in Delegate.TicketType.values:
+        return JsonResponse({"message": "Invalid ticket_type"}, status=400)
+
+    workshop_ids = [
+        data.get("workshop_1_id"),
+        data.get("workshop_2_id"),
+        data.get("workshop_3_id"),
+    ]
+    requested_ids = [int(w) for w in workshop_ids if w]
+
+    if requested_ids and ticket_type not in (
+        Delegate.TicketType.WORKSHOP,
+        Delegate.TicketType.BUNDLE,
+    ):
+        return JsonResponse(
+            {"message": "This ticket type does not include workshop registration"},
+            status=400,
+        )
+
+    if not data.get("password"):
+        return JsonResponse({"message": "Must provide password"}, status=400)
+
+    class _RollbackWithResponse(Exception):
+        def __init__(self, response):
+            self.response = response
+
+    try:
+        with transaction.atomic():
+            user, error = _create_delegate_account(
+                f_name=data.get("f_name"),
+                l_name=data.get("l_name"),
+                email=data.get("email"),
+                password=data.get("password"),
+                pronouns=data.get("pronouns"),
+                year=data.get("year"),
+                school_id=data.get("school_id"),
+                other_school_name=data.get("other_school_name"),
+            )
+            if error:
+                # nothing written yet, safe to return directly
+                return error
+
+            delegate = user.delegate
+            delegate.payment_status = Delegate.PaymentStatus.PAID
+            delegate.ticket_type = ticket_type
+            delegate.eventbrite_order_id = (
+                f"DAY_OF_{request.user.username}_{timezone.now().timestamp()}"
+            )
+            delegate.payment_verified_at = timezone.now()
+            delegate.save()
+
+            if requested_ids:
+                # raise instead of returning here — a bare early return would
+                # exit the `with` block without an exception, committing the
+                # account + payment status already written above even though
+                # workshop registration failed
+                workshop_error = _lock_and_register_workshops(
+                    delegate, requested_ids, replace_existing=False
+                )
+                if workshop_error:
+                    raise _RollbackWithResponse(workshop_error)
+    except _RollbackWithResponse as rollback:
+        return rollback.response
+    except IntegrityError:
+        return JsonResponse(
+            {"message": "Server error creating this delegate — please retry"}, status=409
+        )
+
+    return HttpResponse(
+        serializers.serialize_user(user), content_type="application/json"
+    )

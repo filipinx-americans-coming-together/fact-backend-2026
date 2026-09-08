@@ -188,6 +188,71 @@ class ShibbolethStatusTests(TestCase):
         self.assertFalse(data["is_uiuc_verified"])
 
 
+@override_settings(
+    SAML_MOCK_MODE=True,
+    SAML_MOCK_TARGETED_ID="mock-targeted-id-attach",
+    SAML_MOCK_AFFILIATION="student;member",
+    SAML_FRONTEND_REDIRECT_URL="http://localhost:3000/my-fact/register",
+)
+class ShibbolethAttachToCurrentDelegateTests(TestCase):
+    """
+    UIUC sign-in is reached from partway through /my-fact/register on an
+    already-authenticated delegate now, not a way to log in or create an
+    account — verification must attach to that delegate, never spawn or
+    switch to a separate placeholder account.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(
+            username="real_delegate@example.com",
+            email="real_delegate@example.com",
+            password="testpass123!",
+        )
+        Delegate.objects.create(user=self.user)
+        self.client.login(username="real_delegate@example.com", password="testpass123!")
+
+    def test_verification_attaches_to_current_delegate(self):
+        """No new User/Delegate is created — the existing one is verified in place."""
+        user_count_before = User.objects.count()
+
+        response = self.client.get("/saml/login/")
+
+        self.assertEqual(User.objects.count(), user_count_before)
+        delegate = Delegate.objects.get(user=self.user)
+        self.assertTrue(delegate.is_uiuc_verified)
+        self.assertEqual(delegate.uiuc_targeted_id, "mock-targeted-id-attach")
+        self.assertEqual(response["Location"], "http://localhost:3000/my-fact/register")
+
+    def test_session_stays_the_same_account(self):
+        """Verifying must not switch the logged-in session to a different user."""
+        self.client.get("/saml/login/")
+        response = self.client.get("/saml/status/")
+        data = response.json()
+        self.assertEqual(data["email"], "real_delegate@example.com")
+
+    def test_targeted_id_already_claimed_by_another_delegate_is_rejected(self):
+        """A targeted_id already linked to a different delegate must not be
+        reattached — the current delegate's verification state is untouched
+        and the redirect carries an error the frontend can show."""
+        other_user = User.objects.create_user(username="other@example.com")
+        Delegate.objects.create(
+            user=other_user,
+            is_uiuc_verified=True,
+            uiuc_targeted_id="mock-targeted-id-attach",
+        )
+
+        response = self.client.get("/saml/login/")
+
+        self.assertEqual(
+            response["Location"],
+            "http://localhost:3000/my-fact/register?uiuc_error=already_linked",
+        )
+        delegate = Delegate.objects.get(user=self.user)
+        self.assertFalse(delegate.is_uiuc_verified)
+        self.assertIsNone(delegate.uiuc_targeted_id)
+
+
 @override_settings(SAML_MOCK_MODE=True)
 class ShibbolethMetadataTests(TestCase):
     """Test the /saml/metadata/ endpoint."""

@@ -30,6 +30,79 @@ env = environ.Env()
 environ.Env.read_env()
 
 
+def _lock_and_register_workshops(delegate, requested_ids, replace_existing):
+    """
+    Capacity-checks and writes `delegate`'s registrations for `requested_ids`
+    under row locks (sorted by pk, consistent lock order across concurrent
+    callers to avoid deadlocks) so two requests racing for the last seat
+    can't both pass the check before either writes — see IT Bugs FACT 2024
+    #6 ("why are we over capacity"). Shared by delegate_me, delegates, and
+    fact_admin's day-of registration endpoint so there's exactly one place
+    this logic can go wrong.
+
+    replace_existing=True excludes the delegate's own current registrations
+    from the capacity count (re-picking a session you already hold isn't
+    "taking someone else's seat") and replaces them with `requested_ids`
+    atomically — used when an existing delegate is changing their picks.
+    replace_existing=False just creates registrations for `requested_ids`
+    with no exclusion or cleanup — used for a delegate with no existing
+    registrations yet (fresh signup, or a day-of account).
+
+    Returns None on success, or a JsonResponse describing the first
+    failure (unknown workshop, duplicate session, or a full workshop).
+    Caller must not write to Registration for this delegate outside this
+    function while relying on its capacity guarantee.
+    """
+    with transaction.atomic():
+        workshops_by_id = {
+            w.pk: w
+            for w in Workshop.objects.select_for_update().filter(
+                pk__in=sorted(requested_ids)
+            )
+        }
+
+        if len(workshops_by_id) != len(set(requested_ids)):
+            return JsonResponse(
+                {"message": "Requested workshop not found"}, status=404
+            )
+
+        sessions = []
+        for workshop_id in requested_ids:
+            workshop = workshops_by_id[workshop_id]
+
+            if workshop.session in sessions:
+                return JsonResponse(
+                    {
+                        "message": "Can not register for multiple workshops in a single session"
+                    },
+                    status=400,
+                )
+            sessions.append(workshop.session)
+
+            registrations = Registration.objects.filter(workshop_id=workshop_id)
+            if replace_existing:
+                registrations = registrations.exclude(delegate=delegate)
+            registrations_count = (
+                registrations.count()
+                + FacilitatorRegistration.objects.filter(workshop_id=workshop_id).count()
+            )
+
+            if registrations_count >= workshop.location.capacity:
+                return JsonResponse(
+                    {"message": f"{workshop.title} is full"}, status=409
+                )
+
+        if replace_existing:
+            Registration.objects.filter(delegate=delegate).delete()
+
+        for workshop_id in requested_ids:
+            Registration.objects.create(
+                delegate=delegate, workshop=workshops_by_id[workshop_id]
+            )
+
+    return None
+
+
 def delegate_me(request):
     """
     GET: Get current delegate profile
@@ -134,62 +207,15 @@ def delegate_me(request):
 
                 NewSchool.objects.create(name=other_school_name)
 
-        # workshops
-        # capacity check + write happen together under row locks (sorted by
-        # pk to keep lock order consistent across concurrent requests and
-        # avoid deadlocks) so two delegates racing for the last seat can't
-        # both pass the check before either writes — see IT Bugs FACT 2024
-        # #6 ("why are we over capacity").
+        # workshops: only commit a change if all three sessions were
+        # submitted (matches this endpoint's documented "all required").
         requested_ids = [int(w) for w in workshop_ids if w]
-        with transaction.atomic():
-            workshops_by_id = {
-                w.pk: w
-                for w in Workshop.objects.select_for_update().filter(
-                    pk__in=sorted(requested_ids)
-                )
-            }
-
-            sessions = []
-            for workshop_id in requested_ids:
-                workshop = workshops_by_id[workshop_id]
-                session = workshop.session
-
-                if session in sessions:
-                    return JsonResponse(
-                        {
-                            "message": "Can not register for multiple workshops in a single session"
-                        },
-                        status=400,
-                    )
-
-                sessions.append(session)
-
-                # workshop cap
-                registrations = (
-                    Registration.objects.filter(workshop_id=workshop_id)
-                    .exclude(delegate=user.delegate)
-                    .count()
-                    + FacilitatorRegistration.objects.filter(
-                        workshop_id=workshop_id
-                    ).count()
-                )
-
-                if registrations >= workshop.location.capacity:
-                    return JsonResponse(
-                        {"message": f"{workshop.title} is full"}, status=409
-                    )
-
-            if len(sessions) == 3:
-                # clear registered workshops
-                Registration.objects.filter(delegate=user.delegate).delete()
-
-                # re register
-                for workshop_id in requested_ids:
-                    registration = Registration(
-                        delegate=user.delegate, workshop=workshops_by_id[workshop_id]
-                    )
-
-                    registration.save()
+        if len(requested_ids) == 3:
+            error = _lock_and_register_workshops(
+                user.delegate, requested_ids, replace_existing=True
+            )
+            if error:
+                return error
 
         user.save()
         user.delegate.save()
@@ -251,75 +277,31 @@ def delegates(request):
                 {"message": "Payment required before workshop registration"}, status=402
             )
 
-        workshop_details = {}
-
-        # capacity check + write happen together under row locks (sorted by
-        # pk to keep lock order consistent across concurrent requests and
-        # avoid deadlocks) so two delegates racing for the last seat can't
-        # both pass the check before either writes — see IT Bugs FACT 2024
-        # #6 ("why are we over capacity").
         try:
-            with transaction.atomic():
-                workshops_by_id = {
-                    w.pk: w
-                    for w in Workshop.objects.select_for_update().filter(
-                        pk__in=sorted(workshop_ids)
-                    )
-                }
-
-                if len(workshops_by_id) != len(set(workshop_ids)):
-                    return JsonResponse(
-                        {"message": "Requested workshop not found"}, status=404
-                    )
-
-                sessions = []
-                for workshop_id in workshop_ids:
-                    workshop = workshops_by_id[workshop_id]
-
-                    if workshop.session in sessions:
-                        return JsonResponse(
-                            {
-                                "message": "Can not register for multiple workshops in a single session"
-                            },
-                            status=400,
-                        )
-
-                    sessions.append(workshop.session)
-
-                    registrations = (
-                        Registration.objects.filter(workshop_id=workshop_id).count()
-                        + FacilitatorRegistration.objects.filter(
-                            workshop_id=workshop_id
-                        ).count()
-                    )
-
-                    if registrations >= workshop.location.capacity:
-                        return JsonResponse(
-                            {"message": f"{workshop.title} is full"}, status=409
-                        )
-
-                for workshop_id in workshop_ids:
-                    workshop = workshops_by_id[workshop_id]
-
-                    registration = Registration(delegate=delegate, workshop=workshop)
-                    registration.save()
-
-                    # save workshop names for email
-                    workshop_details[workshop.session] = workshop.title
+            error = _lock_and_register_workshops(
+                delegate, workshop_ids, replace_existing=False
+            )
+            if error:
+                return error
         except Exception:
             return JsonResponse({"message": "Server error during registration"}, status=500)
+
+        workshop_details = {}
+        for workshop_id in workshop_ids:
+            workshop = Workshop.objects.get(pk=workshop_id)
+            workshop_details[workshop.session] = workshop.title
 
         # login
         login(request, user)
 
         # send email
-        subject = f"FACT 2025 Registration Confirmation - {user.first_name} {user.last_name}"
+        subject = f"FACT 2026 Registration Confirmation - {user.first_name} {user.last_name}"
 
         registration_details = ""
         for session in workshop_details:
             registration_details += f"Session {session}: {workshop_details[session]}\n"
 
-        body = f"Thank you for registering for FACT 2025!\n\nYou have registered for the following workshops\n\n{registration_details}\nTo update your personal information, change workshops, and view up to date conference information, visit fact.psauiuc.org/my-fact/dashboard.\nWant to connect with other delegates? Follow @factcommitments2025 on Instagram to see who's committed to FACT!\nFill out https://forms.gle/rwvAhU2JsuGYnLnd7 to be posted!"
+        body = f"Thank you for registering for FACT 2026!\n\nYou have registered for the following workshops\n\n{registration_details}\nTo update your personal information, change workshops, and view up to date conference information, visit fact.psauiuc.org/my-fact/dashboard.\nWant to connect with other delegates? Follow @factcommitments on Instagram to see who's committed to FACT!\nFill out https://forms.gle/rwvAhU2JsuGYnLnd7 to be posted!"
         from_email = env("EMAIL_HOST_USER")
         to_email = [email]
 
