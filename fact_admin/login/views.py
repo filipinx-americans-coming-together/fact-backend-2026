@@ -2,18 +2,8 @@ import json
 
 from django.http import HttpResponse, JsonResponse
 from django.core import serializers
-from django.contrib.auth.models import Group, User
+from django.contrib.auth.models import User
 from django.contrib.auth import authenticate, login
-
-# One-time bootstrap: the very first FACTAdmin has to come from somewhere,
-# and there's no in-product way to create one (see docs/action_items.md).
-# If this exact email logs in successfully (real password required) while
-# zero FACTAdmins exist anywhere in the system yet, grant it the group on
-# the spot. Self-disables permanently the moment any FACTAdmin exists —
-# including right after this first grant — so it can never be reused as a
-# standing backdoor. Remove this block once a normal admin promotion chain
-# is established and this path is no longer needed.
-BOOTSTRAP_ADMIN_EMAIL = "fact.it@psauiuc.org"
 
 
 def login_admin(request):
@@ -41,13 +31,6 @@ def login_admin(request):
 
         if user is None:
             return JsonResponse({"message": "Invalid credentials"}, status=400)
-
-        if (
-            user.email == BOOTSTRAP_ADMIN_EMAIL
-            and not User.objects.filter(groups__name="FACTAdmin").exists()
-        ):
-            admin_group, _ = Group.objects.get_or_create(name="FACTAdmin")
-            user.groups.add(admin_group)
 
         # make sure user is allowed
         if not user.groups.filter(name="FACTAdmin").exists():
