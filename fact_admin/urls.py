@@ -33,6 +33,7 @@ urlpatterns = [
     path("accounts/send-facilitator-links/", action_views.send_facilitator_links, name="send_facilitator_links"),
     path("accounts/promote/", action_views.promote_admin, name="promote_admin"),
     path("accounts/promote/confirm/", action_views.promote_admin_confirm, name="promote_admin_confirm"),
+    path("accounts/promote/status/<str:token>/", action_views.promote_admin_status, name="promote_admin_status"),
     path("accounts/reset-password/", action_views.reset_admin_password, name="reset_admin_password"),
     path("accounts/reset-password/confirm/", action_views.reset_admin_password_confirm, name="reset_admin_password_confirm"),
     path("delegates/day-of/", action_views.day_of_registration, name="day_of_registration"),

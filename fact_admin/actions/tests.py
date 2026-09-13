@@ -338,7 +338,7 @@ class PromoteAdminPOST(TestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn(self.target_email, mail.outbox[0].to)
 
-    def test_email_not_found(self):
+    def test_no_existing_account_creates_pending_invite(self):
         self.client.login(username=self.admin_username, password=self.admin_password)
 
         response = self.client.post(
@@ -347,7 +347,17 @@ class PromoteAdminPOST(TestCase):
             content_type="application/json",
         )
 
-        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.status_code, 200)
+
+        promotion = AdminPromotion.objects.get(email="nobody@email.com")
+        self.assertTrue(promotion.is_new_account)
+
+        new_user = User.objects.get(email="nobody@email.com")
+        self.assertFalse(new_user.groups.filter(name="FACTAdmin").exists())
+        self.assertTrue(new_user.has_usable_password())
+
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("nobody@email.com", mail.outbox[0].to)
 
     def test_already_admin_rejected(self):
         self.client.login(username=self.admin_username, password=self.admin_password)
@@ -407,6 +417,69 @@ class PromoteAdminConfirmPOST(TestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertFalse(self.target.groups.filter(name="FACTAdmin").exists())
+
+
+class PromoteAdminConfirmNewAccountPOST(TestCase):
+    def setUp(self):
+        self.client = Client()
+
+        self.target_email = "newadmin@email.com"
+        self.target = User.objects.create(
+            username="newadmin1234", email=self.target_email
+        )
+        self.target.set_password("original-random-password")
+        self.target.save()
+
+        self.token = PasswordResetTokenGenerator().make_token(self.target)
+        self.promotion = AdminPromotion.objects.create(
+            email=self.target_email,
+            token=self.token,
+            expiration=timezone.now() + timezone.timedelta(hours=24),
+            is_new_account=True,
+        )
+
+        self.url = reverse("fact_admin:promote_admin_confirm")
+        self.status_url = reverse(
+            "fact_admin:promote_admin_status", args=[self.token]
+        )
+
+    def test_status_reports_new_account(self):
+        response = self.client.get(self.status_url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(json.loads(response.content)["is_new_account"])
+
+    def test_confirm_without_password_rejected(self):
+        response = self.client.post(
+            self.url, {"token": self.token}, content_type="application/json"
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(self.target.groups.filter(name="FACTAdmin").exists())
+
+    def test_confirm_with_weak_password_rejected(self):
+        response = self.client.post(
+            self.url,
+            {"token": self.token, "password": "123"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(self.target.groups.filter(name="FACTAdmin").exists())
+
+    def test_confirm_with_password_sets_it_and_grants_group(self):
+        response = self.client.post(
+            self.url,
+            {"token": self.token, "password": "a-strong-enough-password-123"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(self.target.groups.filter(name="FACTAdmin").exists())
+        self.assertFalse(AdminPromotion.objects.filter(pk=self.promotion.pk).exists())
+
+        self.target.refresh_from_db()
+        self.assertTrue(self.target.check_password("a-strong-enough-password-123"))
 
 
 class ResetAdminPasswordPOST(TestCase):

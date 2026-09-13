@@ -1,9 +1,15 @@
 import json
+import re
+import secrets
+import string
+import unicodedata
 from django.db import IntegrityError, transaction
 from django.http import FileResponse, HttpResponse, JsonResponse
 from django.core import serializers as django_serializers
 from django.contrib.auth.models import Group, User
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.core.mail import send_mail
@@ -332,13 +338,42 @@ def send_facilitator_links(request):
         return JsonResponse({"message": "method not allowed"}, status=405)
 
 
+def _create_pending_admin_account(email):
+    """
+    Pre-create a User for an admin invite when no account exists yet for
+    that email, mirroring registration.facilitator.views.
+    create_facilitator_account's username-generation scheme. The random
+    password set here is never shared with anyone — promote_admin_confirm
+    overwrites it with one the invitee chooses themselves before the
+    FACTAdmin group is granted, so the account is unusable until then.
+    """
+    local_part = email.split("@")[0]
+    ascii_string = (
+        unicodedata.normalize("NFKD", local_part).encode("ascii", "ignore").decode("ascii")
+    )
+    cleaned = re.sub(r"[^a-zA-Z]", "", ascii_string)
+    base_username = (cleaned[:9] or "admin").lower()
+
+    username = base_username + "".join(secrets.choice(string.digits) for _ in range(4))
+    while User.objects.filter(username=username).exists():
+        username = base_username + "".join(secrets.choice(string.digits) for _ in range(4))
+
+    user = User(username=username, email=email)
+    alphabet = string.ascii_letters + string.digits
+    user.set_password("".join(secrets.choice(alphabet) for _ in range(24)))
+    user.save()
+    return user
+
+
 def promote_admin(request):
     """
-    POST: Request that an existing registered user be promoted to FACTAdmin
-    (admin only). Sends a confirmation link to the target's email instead of
-    granting the group immediately — the promotion only takes effect once
-    they click it (see promote_admin_confirm below). Requires the target to
-    already have an account; there is no self-service admin signup.
+    POST: Request that a user be promoted to FACTAdmin (admin only). Sends a
+    confirmation link to the target's email instead of granting the group
+    immediately — the promotion only takes effect once they click it (see
+    promote_admin_confirm below). If no account exists yet for that email,
+    one is pre-created (see _create_pending_admin_account) and the confirm
+    link doubles as an account-setup link, collecting a password before
+    granting the group.
     """
     if not request.user.groups.filter(name="FACTAdmin").exists():
         return JsonResponse(
@@ -356,13 +391,12 @@ def promote_admin(request):
 
     try:
         target = User.objects.get(email=email)
+        is_new_account = False
     except User.DoesNotExist:
-        return JsonResponse(
-            {"message": "No account found with that email — they must create an account first"},
-            status=404,
-        )
+        target = _create_pending_admin_account(email)
+        is_new_account = True
 
-    if target.groups.filter(name="FACTAdmin").exists():
+    if not is_new_account and target.groups.filter(name="FACTAdmin").exists():
         return JsonResponse({"message": "This user is already an admin"}, status=400)
 
     token_generator = PasswordResetTokenGenerator()
@@ -373,36 +407,76 @@ def promote_admin(request):
         token=token,
         expiration=timezone.now() + timezone.timedelta(hours=24),
         requested_by=request.user,
+        is_new_account=is_new_account,
     )
     promotion.save()
 
     confirm_url = f"{os.getenv('ADMIN_PROMOTION_URL')}/{token}"
 
-    subject = "FACT Admin Access Request"
-    body = (
-        f"Hi {target.first_name}. {request.user.first_name} {request.user.last_name} "
-        f"has requested that your FACT account be given admin access.\n\n"
-        f"If you'd like to accept, click the link below:\n\n{confirm_url}\n\n"
-        f"If you weren't expecting this, you can ignore this email — nothing happens "
-        f"until this link is clicked. This link will expire in 24 hours."
-    )
+    if is_new_account:
+        subject = "FACT Admin Account Invitation"
+        body = (
+            f"Hi. {request.user.first_name} {request.user.last_name} "
+            f"has invited you to create a FACT admin account.\n\n"
+            f"Click the link below to set your password and finish creating your account:\n\n{confirm_url}\n\n"
+            f"If you weren't expecting this, you can ignore this email, nothing happens "
+            f"until this link is clicked and a password is set. This link will expire in 24 hours."
+        )
+    else:
+        subject = "FACT Admin Access Request"
+        body = (
+            f"Hi {target.first_name}. {request.user.first_name} {request.user.last_name} "
+            f"has requested that your FACT account be given admin access.\n\n"
+            f"If you'd like to accept, click the link below:\n\n{confirm_url}\n\n"
+            f"If you weren't expecting this, you can ignore this email, nothing happens "
+            f"until this link is clicked. This link will expire in 24 hours."
+        )
     from_email = os.getenv("EMAIL_HOST_USER")
     send_mail(subject, body, from_email, [email])
 
-    return JsonResponse({"message": f"Promotion request sent to {email}"})
+    message = (
+        f"Invite sent to {email} to create a new admin account"
+        if is_new_account
+        else f"Promotion request sent to {email}"
+    )
+    return JsonResponse({"message": message})
+
+
+def promote_admin_status(request, token):
+    """
+    GET: Whether a pending promotion token belongs to a brand-new account
+    (confirm step must collect a password) or an existing one (plain
+    accept). Not admin-gated, same rationale as promote_admin_confirm — the
+    token itself is the credential.
+    """
+    if request.method != "GET":
+        return JsonResponse({"message": "method not allowed"}, status=405)
+
+    AdminPromotion.objects.filter(expiration__lt=timezone.now()).delete()
+
+    try:
+        promotion = AdminPromotion.objects.get(token=token)
+    except AdminPromotion.DoesNotExist:
+        return JsonResponse({"message": "Invalid or expired promotion link"}, status=409)
+
+    return JsonResponse({"is_new_account": promotion.is_new_account})
 
 
 def promote_admin_confirm(request):
     """
     POST: Confirm a pending admin promotion using the token emailed by
     promote_admin above. Not admin-gated — the token itself, known only to
-    whoever received the email, is the credential.
+    whoever received the email, is the credential. When the promotion was
+    for a brand-new account (see is_new_account), a password must also be
+    provided here to finish setting the account up before the group is
+    granted.
     """
     if request.method != "POST":
         return JsonResponse({"message": "method not allowed"}, status=405)
 
     data = json.loads(request.body)
     token = data.get("token")
+    password = data.get("password")
 
     if not token or len(token) == 0:
         return JsonResponse({"message": "Must provide token"}, status=400)
@@ -419,6 +493,18 @@ def promote_admin_confirm(request):
     except User.DoesNotExist:
         promotion.delete()
         return JsonResponse({"message": "That account no longer exists"}, status=404)
+
+    if promotion.is_new_account:
+        if not password or len(password) == 0:
+            return JsonResponse({"message": "Must provide password"}, status=400)
+        try:
+            validate_password(password)
+        except ValidationError:
+            return JsonResponse(
+                {"message": "Password is not strong enough"}, status=400
+            )
+        target.set_password(password)
+        target.save()
 
     admin_group, _ = Group.objects.get_or_create(name="FACTAdmin")
     target.groups.add(admin_group)
@@ -479,7 +565,7 @@ def reset_admin_password(request):
         f"Hi {target.first_name}. {request.user.first_name} {request.user.last_name} "
         f"has requested a password reset for your FACT admin account.\n\n"
         f"If you'd like to set a new password, click the link below:\n\n{confirm_url}\n\n"
-        f"If you weren't expecting this, you can ignore this email — nothing changes "
+        f"If you weren't expecting this, you can ignore this email, nothing changes "
         f"until this link is clicked and a new password is submitted. This link will "
         f"expire in 24 hours."
     )

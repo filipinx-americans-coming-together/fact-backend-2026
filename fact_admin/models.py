@@ -89,6 +89,12 @@ class AdminPromotion(models.Model):
         null=True,
         help_text="The FACTAdmin who requested this promotion, for audit",
     )
+    is_new_account = models.BooleanField(
+        default=False,
+        help_text="True if promote_admin had to create the target User (no "
+        "existing account for that email) — the confirm step must then also "
+        "collect a password, instead of just granting the group.",
+    )
 
     def __str__(self):
         return f"promote {self.email}"
