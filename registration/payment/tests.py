@@ -1,4 +1,5 @@
 import json
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.test import Client, TestCase, override_settings
@@ -116,6 +117,29 @@ class VerifyPaymentPOSTTest(TestCase):
         self.assertEqual(self.delegate.payment_status, Delegate.PaymentStatus.PAID)
         self.assertEqual(self.delegate.ticket_type, Delegate.TicketType.WORKSHOP)
         self.assertEqual(self.delegate.eventbrite_order_id, "MOCK_ORDER_workshop_none")
+
+    def test_self_reported_netid_is_saved(self):
+        # Real Eventbrite order carrying an answer to the "NetID"
+        # custom question — mock mode's fixed order encoding can't express
+        # this, so get_order itself is patched instead.
+        with patch(
+            "registration.payment.views.eventbrite_client.get_order",
+            return_value={
+                "id": "real-order-1",
+                "status": "placed",
+                "event_id": "mock-event-id-workshop",
+                "ticket_class_id": "mock-workshop-uiuc",
+                "discount_code": None,
+                "netid": "jsmith2",
+            },
+        ):
+            response = self.client.post(
+                self.url, {"order_id": "real-order-1"}, content_type="application/json"
+            )
+        self.assertEqual(response.status_code, 200)
+
+        self.delegate.refresh_from_db()
+        self.assertEqual(self.delegate.uiuc_netid_self_reported, "jsmith2")
 
     def test_uiuc_order_with_matching_promo_redeems_it(self):
         promo = UIUCPromoCode.objects.create(

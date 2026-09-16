@@ -114,6 +114,12 @@ class Delegate(models.Model):
         payment_status: Current payment state, verified server-side against Eventbrite
         eventbrite_order_id: The verified Eventbrite order ID (globally unique)
         payment_verified_at: Timestamp of successful payment verification
+        uiuc_netid_self_reported: NetID typed into Eventbrite's "NetID" custom
+            question on checkout for the free UIUC ticket classes. Self-reported,
+            not verified against Shibboleth — an interim stand-in for manual
+            cross-checking (e.g. against Outlook) while Shib/iTrust isn't live yet.
+            Never trust this alone for identity; uiuc_targeted_id is what Shibboleth
+            actually verifies once that path exists.
     """
 
     class TicketType(models.TextChoices):
@@ -152,6 +158,7 @@ class Delegate(models.Model):
         max_length=100, null=True, blank=True, unique=True
     )
     payment_verified_at = models.DateTimeField(blank=True, null=True)
+    uiuc_netid_self_reported = models.CharField(max_length=50, blank=True, null=True)
 
     def __str__(self):
         return f"{self.user.last_name}, {self.user.first_name} - {self.user.email}"

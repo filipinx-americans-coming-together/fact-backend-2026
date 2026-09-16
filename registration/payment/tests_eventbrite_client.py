@@ -152,6 +152,10 @@ class RealGetOrderRequestShapeTest(TestCase):
                     {
                         "ticket_class_id": "ticket-1",
                         "promotional_code": {"code": "UIUC_ABC_XYZ"},
+                        "answers": [
+                            {"question_id": "999", "question": "NetID", "answer": "jsmith2"},
+                            {"question_id": "998", "question": "T-shirt size", "answer": "M"},
+                        ],
                     }
                 ],
             },
@@ -161,6 +165,25 @@ class RealGetOrderRequestShapeTest(TestCase):
 
         args, kwargs = mock_get.call_args
         self.assertEqual(args[0], "https://www.eventbriteapi.com/v3/orders/12345/")
-        self.assertEqual(kwargs["params"], {"expand": "attendees,attendees.promotional_code"})
+        self.assertEqual(
+            kwargs["params"], {"expand": "attendees,attendees.promotional_code,attendees.answers"}
+        )
         self.assertEqual(order["ticket_class_id"], "ticket-1")
         self.assertEqual(order["discount_code"], "UIUC_ABC_XYZ")
+        self.assertEqual(order["netid"], "jsmith2")
+
+    @patch("registration.payment.eventbrite_client.requests.get")
+    def test_missing_netid_answer_is_none(self, mock_get):
+        mock_get.return_value = Mock(
+            ok=True,
+            status_code=200,
+            json=lambda: {
+                "id": "12345",
+                "status": "placed",
+                "event_id": "event-456",
+                "attendees": [{"ticket_class_id": "ticket-1", "answers": []}],
+            },
+        )
+
+        order = eventbrite_client.get_order("12345")
+        self.assertIsNone(order["netid"])

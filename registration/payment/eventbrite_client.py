@@ -100,9 +100,21 @@ def _mock_get_order(order_id):
                 "event_id": _MOCK_EVENT_IDS[ticket_type],
                 "ticket_class_id": ticket_class_id,
                 "discount_code": discount_code,
+                "netid": None,
             }
 
     raise EventbriteError(f"Unknown mock ticket type in order_id '{order_id}'")
+
+
+# Custom Question text (event-scoped, type "text", respondent "attendee")
+# attached to the UIUC ticket classes on the real events — not a
+# Shibboleth attribute, purely self-reported at checkout as an interim
+# stand-in until Shib/iTrust is live. Matched by exact question text since
+# the Attendee Answers expansion keys answers by question_id, which
+# differs per event/question, not by any stable name. Confirmed against
+# the real questions (event 2001126216382 q323798359, event 2001120979719
+# q323798414): text is exactly "NetID", not "UIUC NetID".
+NETID_QUESTION_TEXT = "NetID"
 
 
 def _real_get_order(order_id):
@@ -117,9 +129,13 @@ def _real_get_order(order_id):
         # 100%-off order — comes back null even though a code was used).
         # The real discount data only shows up via the nested
         # attendees.promotional_code expansion, as {code, percent_off, ...}
-        # on each attendee.
+        # on each attendee. attendees.answers is the same pattern for
+        # custom-question answers (e.g. self-reported NetID).
         response = requests.get(
-            url, headers=headers, params={"expand": "attendees,attendees.promotional_code"}, timeout=10
+            url,
+            headers=headers,
+            params={"expand": "attendees,attendees.promotional_code,attendees.answers"},
+            timeout=10,
         )
     except requests.RequestException as e:
         raise EventbriteError(f"Eventbrite request failed: {e}")
@@ -133,12 +149,18 @@ def _real_get_order(order_id):
     attendees = raw.get("attendees", [])
     ticket_class_id = attendees[0]["ticket_class_id"] if attendees else None
     promotional_code = attendees[0].get("promotional_code") if attendees else None
+    answers = attendees[0].get("answers", []) if attendees else []
+    netid = next(
+        (a["answer"] for a in answers if a.get("question") == NETID_QUESTION_TEXT and a.get("answer")),
+        None,
+    )
     return {
         "id": raw["id"],
         "status": raw.get("status"),
         "event_id": raw.get("event_id"),
         "ticket_class_id": ticket_class_id,
         "discount_code": promotional_code["code"] if promotional_code else None,
+        "netid": netid,
     }
 
 
@@ -146,7 +168,9 @@ def get_order(order_id):
     """
     Fetch and normalize an Eventbrite order.
 
-    Returns a dict: {id, status, event_id, ticket_class_id, discount_code}.
+    Returns a dict: {id, status, event_id, ticket_class_id, discount_code, netid}.
+    netid is the self-reported answer to the "NetID" custom question,
+    or None if that question wasn't answered/attached to this order's ticket.
     Raises EventbriteError if the order can't be found or the API fails.
     """
     if settings.EVENTBRITE_MOCK_MODE:

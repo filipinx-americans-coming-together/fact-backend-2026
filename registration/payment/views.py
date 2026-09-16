@@ -169,6 +169,8 @@ def verify_payment(request):
             delegate.eventbrite_order_id = order_id
             delegate.ticket_type = ticket_type
             delegate.payment_verified_at = timezone.now()
+            if order["netid"]:
+                delegate.uiuc_netid_self_reported = order["netid"]
             delegate.save()
 
             if matched_promo is not None:

@@ -26,6 +26,7 @@ class DelegateAdmin(admin.ModelAdmin):
         "__str__",
         "is_uiuc_verified",
         "uiuc_affiliation",
+        "uiuc_netid_self_reported",
         "payment_status",
         "ticket_type",
         "eventbrite_order_id",
@@ -37,6 +38,7 @@ class DelegateAdmin(admin.ModelAdmin):
         "user__first_name",
         "user__last_name",
         "uiuc_targeted_id",
+        "uiuc_netid_self_reported",
         "eventbrite_order_id",
     )
 
