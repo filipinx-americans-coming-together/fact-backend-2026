@@ -154,14 +154,21 @@ def verify_payment(request):
         return JsonResponse({"message": "Order does not belong to this event"}, status=400)
 
     matched_promo = None
-    if order["discount_code"]:
-        matched_promo = UIUCPromoCode.objects.filter(
-            delegate=delegate, ticket_type=ticket_type, code=order["discount_code"]
-        ).first()
-        if matched_promo is None:
-            return JsonResponse(
-                {"message": "Discount code on this order does not belong to you"}, status=403
-            )
+    # Per-delegate discount-code ownership check temporarily disabled — not
+    # a removal. Real Shibboleth/iTrust verification isn't live yet, so
+    # UIUC students currently get one fixed, shared Eventbrite discount
+    # code with no per-delegate UIUCPromoCode row ever issued for it; this
+    # check rejected every legitimate use of that code. Re-enable once
+    # Shibboleth-verified per-delegate promo codes (uiuc_promo_code below)
+    # are the only way discount codes are issued again.
+    # if order["discount_code"]:
+    #     matched_promo = UIUCPromoCode.objects.filter(
+    #         delegate=delegate, ticket_type=ticket_type, code=order["discount_code"]
+    #     ).first()
+    #     if matched_promo is None:
+    #         return JsonResponse(
+    #             {"message": "Discount code on this order does not belong to you"}, status=403
+    #         )
 
     try:
         with transaction.atomic():

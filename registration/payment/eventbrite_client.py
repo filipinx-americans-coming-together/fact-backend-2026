@@ -11,11 +11,14 @@ with a JSON body nested under "discount".
 """
 
 import hashlib
+import logging
 import secrets
 import string
 
 import requests
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 
 class EventbriteError(Exception):
@@ -138,11 +141,17 @@ def _real_get_order(order_id):
             timeout=10,
         )
     except requests.RequestException as e:
+        logger.error("Eventbrite get_order(%s) request failed: %s", order_id, e)
         raise EventbriteError(f"Eventbrite request failed: {e}")
 
     if response.status_code == 404:
+        logger.error("Eventbrite get_order(%s): order not found (404): %s", order_id, response.text)
         raise EventbriteError(f"Order {order_id} not found")
     if not response.ok:
+        logger.error(
+            "Eventbrite get_order(%s) failed with status %s: %s",
+            order_id, response.status_code, response.text,
+        )
         raise EventbriteError(f"Eventbrite API error (status {response.status_code})")
 
     raw = response.json()
@@ -200,9 +209,14 @@ def _real_create_discount(event_id, uiuc_ticket_class_id, code):
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=10)
     except requests.RequestException as e:
+        logger.error("Eventbrite create_discount(%s) request failed: %s", event_id, e)
         raise EventbriteError(f"Eventbrite request failed: {e}")
 
     if not response.ok:
+        logger.error(
+            "Eventbrite create_discount(%s) failed with status %s: %s",
+            event_id, response.status_code, response.text,
+        )
         raise EventbriteError(f"Eventbrite API error (status {response.status_code})")
     return response.json()
 
