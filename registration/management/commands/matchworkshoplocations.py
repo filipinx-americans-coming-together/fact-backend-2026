@@ -115,7 +115,8 @@ def set_locations(reporter=None):
                 if session_2.exists():
                     location_assignments.loc[
                         location_assignments["workshop"]
-                        == session_2.first().workshop
+                        == session_2.first().workshop,
+                        "location",
                     ] = moveable_locations.iloc[location_idx]["id"]
 
             location_idx += 1
@@ -152,8 +153,9 @@ def set_locations(reporter=None):
                 if session_2.exists():
                     location_assignments.loc[
                         location_assignments["workshop"]
-                        == session_2.first().workshop
-                    ] = moveable_locations.iloc[location_idx]["id"]
+                        == session_2.first().workshop,
+                        "location",
+                    ] = locations.iloc[location_idx]["id"]
 
             location_idx += 1
 
