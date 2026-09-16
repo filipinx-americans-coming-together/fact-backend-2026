@@ -7,13 +7,21 @@ from registration.payment import eventbrite_client
 from registration.payment.eventbrite_client import EventbriteError
 
 
-@override_settings(EVENTBRITE_MOCK_MODE=True, EVENTBRITE_EVENT_ID="mock-event-id")
+@override_settings(EVENTBRITE_MOCK_MODE=True)
 class GetOrderMockTest(TestCase):
     def test_valid_mock_order_no_discount(self):
         order = eventbrite_client.get_order("MOCK_ORDER_workshop_none")
         self.assertEqual(order["status"], "placed")
-        self.assertEqual(order["event_id"], "mock-event-id")
+        self.assertEqual(order["event_id"], "mock-event-id-workshop")
         self.assertIsNone(order["discount_code"])
+
+    def test_valid_mock_order_uses_hidden_uiuc_ticket_class(self):
+        # FREE_ marker selects the hidden $0 UIUC class instead of the
+        # paid one — mirrors the real two-classes-per-type setup.
+        order = eventbrite_client.get_order("MOCK_ORDER_bundle_FREE_none")
+        self.assertEqual(
+            order["ticket_class_id"], settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS["bundle"]
+        )
 
     def test_valid_mock_order_with_discount(self):
         order = eventbrite_client.get_order("MOCK_ORDER_bundle_UIUC_jsmith2_X9B4")
@@ -84,14 +92,16 @@ class CreateDiscountMockTest(TestCase):
 @override_settings(
     EVENTBRITE_MOCK_MODE=False,
     EVENTBRITE_ORGANIZATION_ID="org-123",
-    EVENTBRITE_EVENT_ID="event-456",
+    EVENTBRITE_EVENT_IDS={"workshop": "event-456", "variety_show": "event-789", "bundle": "event-789"},
 )
 class RealCreateDiscountRequestShapeTest(TestCase):
     """
     Locks in the Discounts request shape against the real Eventbrite API v3
     spec: organization-scoped URL, JSON body (not form-encoded) nested
     under "discount", with event_id inside the body since the URL itself
-    no longer carries it.
+    no longer carries it. It's an "access" discount revealing the hidden
+    UIUC ticket class, not a percent-off on the paid one — see
+    eventbrite_client.create_discount's docstring for why.
     """
 
     @patch("registration.payment.eventbrite_client.requests.post")
@@ -105,8 +115,12 @@ class RealCreateDiscountRequestShapeTest(TestCase):
         self.assertNotIn("data", kwargs)
         self.assertIn("json", kwargs)
         discount = kwargs["json"]["discount"]
+        self.assertEqual(discount["type"], "access")
+        self.assertNotIn("percent_off", discount)
         self.assertEqual(discount["event_id"], "event-456")
-        self.assertEqual(discount["ticket_class_ids"], [settings.EVENTBRITE_TICKET_CLASS_IDS["workshop"]])
+        self.assertEqual(
+            discount["ticket_class_ids"], [settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS["workshop"]]
+        )
         self.assertEqual(result["eventbrite_discount_id"], "discount-789")
 
     @patch("registration.payment.eventbrite_client.requests.post")

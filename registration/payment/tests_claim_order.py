@@ -41,7 +41,7 @@ class ClaimOrderPOSTTest(TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertFalse(User.objects.exists())
 
-    @override_settings(EVENTBRITE_EVENT_ID="a-different-event")
+    @override_settings(EVENTBRITE_EVENT_IDS={"workshop": "a-different-event", "variety_show": "a-different-event", "bundle": "a-different-event"})
     def test_order_for_different_event_rejected(self):
         response = self._post("MOCK_ORDER_workshop_none")
         self.assertEqual(response.status_code, 400)

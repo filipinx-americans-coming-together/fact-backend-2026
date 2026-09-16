@@ -44,17 +44,29 @@ def _short_id(targeted_id, length=10):
 # get_order
 # ---------------------------------------------------------------------------
 
+# Fixed sentinels, deliberately NOT derived from settings.EVENTBRITE_EVENT_IDS
+# — a real order's event_id is fixed at creation time regardless of what's
+# currently configured; echoing the live setting here would make the
+# wrong-event rejection path in verify_payment untestable (the comparison
+# could never fail). variety_show and bundle share one sentinel because
+# they share one real event (see settings.py).
+_MOCK_EVENT_IDS = {
+    "workshop": "mock-event-id-workshop",
+    "variety_show": "mock-event-id-vshow",
+    "bundle": "mock-event-id-vshow",
+}
+
+
 def _mock_get_order(order_id):
     """
-    Mock orders are encoded as MOCK_ORDER_<ticket_type>_<discount_code_or_none>.
-    Matched against known ticket type keys (not a blind split) because
-    ticket type names like "variety_show" contain underscores themselves.
+    Mock orders are encoded as
+    MOCK_ORDER_<ticket_type>_[FREE_]<discount_code_or_none>. Matched against
+    known ticket type keys (not a blind split) because ticket type names
+    like "variety_show" contain underscores themselves.
 
-    Always returns event_id="mock-event-id" — a fixed sentinel, not the
-    live EVENTBRITE_EVENT_ID setting. A real order's event_id is fixed at
-    creation time regardless of what's currently configured; echoing the
-    live setting here would make the wrong-event rejection path in
-    verify_payment untestable (the comparison could never fail).
+    An optional "FREE_" marker right after the ticket type selects the
+    hidden, $0 UIUC ticket class instead of the paid one — mirrors the real
+    two-ticket-classes-per-type setup (see EVENTBRITE_UIUC_TICKET_CLASS_IDS).
 
     A "PENDING_" prefix right after MOCK_ORDER_ makes the mock report
     status="pending" instead of "placed", so verify_payment's rejection
@@ -74,12 +86,19 @@ def _mock_get_order(order_id):
         prefix = f"{ticket_type}_"
         if remainder.startswith(prefix):
             rest = remainder[len(prefix):]
+
+            if rest.startswith("FREE_"):
+                ticket_class_id = settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS[ticket_type]
+                rest = rest[len("FREE_"):]
+            else:
+                ticket_class_id = settings.EVENTBRITE_TICKET_CLASS_IDS[ticket_type]
+
             discount_code = rest if rest != "none" else None
             return {
                 "id": order_id,
                 "status": status,
-                "event_id": "mock-event-id",
-                "ticket_class_id": settings.EVENTBRITE_TICKET_CLASS_IDS[ticket_type],
+                "event_id": _MOCK_EVENT_IDS[ticket_type],
+                "ticket_class_id": ticket_class_id,
                 "discount_code": discount_code,
             }
 
@@ -139,17 +158,19 @@ def get_order(order_id):
 # create_discount
 # ---------------------------------------------------------------------------
 
-def _real_create_discount(ticket_class_id, code):
+def _real_create_discount(event_id, uiuc_ticket_class_id, code):
     url = f"https://www.eventbriteapi.com/v3/organizations/{settings.EVENTBRITE_ORGANIZATION_ID}/discounts/"
     headers = {"Authorization": f"Bearer {settings.EVENTBRITE_API_TOKEN}"}
     payload = {
         "discount": {
             "code": code,
-            "type": "coded",
-            "percent_off": "100",
+            # "access" reveals a hidden ticket class rather than discounting
+            # a visible one — the UIUC ticket class is already $0, so no
+            # percent_off/amount_off is needed at all.
+            "type": "access",
             "quantity_available": 1,
-            "event_id": settings.EVENTBRITE_EVENT_ID,
-            "ticket_class_ids": [ticket_class_id],
+            "event_id": event_id,
+            "ticket_class_ids": [uiuc_ticket_class_id],
         }
     }
     try:
@@ -164,15 +185,18 @@ def _real_create_discount(ticket_class_id, code):
 
 def create_discount(targeted_id, ticket_type):
     """
-    Create a single-use, 100%-off discount code for the given ticket type,
-    tagged with a short hash of the delegate's opaque eduPersonTargetedID
-    (there's no netid/email to scope it to — see shibboleth_auth).
+    Create a single-use access code that reveals the hidden, $0 UIUC ticket
+    class for the given ticket type, tagged with a short hash of the
+    delegate's opaque eduPersonTargetedID (there's no netid/email to scope
+    it to via Shibboleth — see shibboleth_auth; the Eventbrite ticket itself
+    asks for NetID directly via its own custom question instead).
 
     Returns a dict: {code, eventbrite_discount_id}.
     Raises EventbriteError if the ticket type is unrecognized or the API fails.
     """
-    ticket_class_id = settings.EVENTBRITE_TICKET_CLASS_IDS.get(ticket_type)
-    if ticket_class_id is None:
+    uiuc_ticket_class_id = settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS.get(ticket_type)
+    event_id = settings.EVENTBRITE_EVENT_IDS.get(ticket_type)
+    if uiuc_ticket_class_id is None or event_id is None:
         raise EventbriteError(f"Unknown ticket type '{ticket_type}'")
 
     code = f"UIUC_{_short_id(targeted_id)}_{_random_suffix()}"
@@ -180,5 +204,5 @@ def create_discount(targeted_id, ticket_type):
     if settings.EVENTBRITE_MOCK_MODE:
         return {"code": code, "eventbrite_discount_id": f"MOCK_DISCOUNT_{code}"}
 
-    raw = _real_create_discount(ticket_class_id, code)
+    raw = _real_create_discount(event_id, uiuc_ticket_class_id, code)
     return {"code": code, "eventbrite_discount_id": raw["id"]}

@@ -270,13 +270,36 @@ SAML_MOCK_AFFILIATION = env("SAML_MOCK_AFFILIATION", default="student;member")
 EVENTBRITE_MOCK_MODE = env.bool("EVENTBRITE_MOCK_MODE", default=DEVELOPMENT_MODE)
 
 EVENTBRITE_API_TOKEN = env("EVENTBRITE_API_TOKEN", default="")
-EVENTBRITE_EVENT_ID = env("EVENTBRITE_EVENT_ID", default="mock-event-id")
+
 # Discount creation is organization-scoped (POST /organizations/{id}/discounts/),
-# not event-scoped — see registration/payment/eventbrite_client.py.
+# not event-scoped — see registration/payment/eventbrite_client.py. One org,
+# but two real events: workshop-only tickets live on their own event (no
+# venue cap), while variety_show/bundle share a second event because both
+# draw from the same 712-seat Foellinger Auditorium reserved-seating map —
+# that shared physical seat pool is what enforces their combined cap, not
+# application code.
 EVENTBRITE_ORGANIZATION_ID = env("EVENTBRITE_ORGANIZATION_ID", default="mock-organization-id")
 
+EVENTBRITE_EVENT_IDS = {
+    "workshop": env("EVENTBRITE_EVENT_ID_WORKSHOP", default="mock-event-id-workshop"),
+    "variety_show": env("EVENTBRITE_EVENT_ID_VSHOW", default="mock-event-id-vshow"),
+    "bundle": env("EVENTBRITE_EVENT_ID_VSHOW", default="mock-event-id-vshow"),
+}
+
+# Paid, publicly visible ticket classes.
 EVENTBRITE_TICKET_CLASS_IDS = {
     "variety_show": env("EVENTBRITE_TICKET_CLASS_VARIETY_SHOW", default="mock-variety-show"),
     "workshop": env("EVENTBRITE_TICKET_CLASS_WORKSHOP", default="mock-workshop"),
     "bundle": env("EVENTBRITE_TICKET_CLASS_BUNDLE", default="mock-bundle"),
+}
+
+# Hidden, $0 ticket classes only revealed by an "access" discount code —
+# what a UIUC-verified delegate's promo code actually unlocks. Kept as
+# separate ticket classes rather than a 100%-off discount on the paid one,
+# so the free tier can carry its own capacity and its own custom question
+# (NetID collection) without touching the public ticket at all.
+EVENTBRITE_UIUC_TICKET_CLASS_IDS = {
+    "variety_show": env("EVENTBRITE_UIUC_TICKET_CLASS_VARIETY_SHOW", default="mock-variety-show-uiuc"),
+    "workshop": env("EVENTBRITE_UIUC_TICKET_CLASS_WORKSHOP", default="mock-workshop-uiuc"),
+    "bundle": env("EVENTBRITE_UIUC_TICKET_CLASS_BUNDLE", default="mock-bundle-uiuc"),
 }

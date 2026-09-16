@@ -95,7 +95,12 @@ def uiuc_promo_code(request):
 
 
 def _resolve_ticket_type(ticket_class_id):
+    # Checks both the paid, publicly-visible class and the hidden, $0 UIUC
+    # class for each ticket type — an order can legitimately be either one.
     for ticket_type, class_id in settings.EVENTBRITE_TICKET_CLASS_IDS.items():
+        if class_id == ticket_class_id:
+            return ticket_type
+    for ticket_type, class_id in settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS.items():
         if class_id == ticket_class_id:
             return ticket_type
     return None
@@ -135,15 +140,18 @@ def verify_payment(request):
     except EventbriteError:
         return JsonResponse({"message": "Could not verify order with Eventbrite"}, status=503)
 
-    if order["event_id"] != settings.EVENTBRITE_EVENT_ID:
-        return JsonResponse({"message": "Order does not belong to this event"}, status=400)
-
     if order["status"] != "placed":
         return JsonResponse({"message": "Order is not complete"}, status=400)
 
+    # ticket_type must be resolved before the event check below — workshop
+    # and variety_show/bundle are two different real events, so which
+    # event_id is "correct" depends on which ticket class this order used.
     ticket_type = _resolve_ticket_type(order["ticket_class_id"])
     if ticket_type is None:
         return JsonResponse({"message": "Unrecognized ticket class"}, status=400)
+
+    if order["event_id"] != settings.EVENTBRITE_EVENT_IDS[ticket_type]:
+        return JsonResponse({"message": "Order does not belong to this event"}, status=400)
 
     matched_promo = None
     if order["discount_code"]:
@@ -225,9 +233,6 @@ def claim_order(request):
     except EventbriteError:
         return JsonResponse({"message": "Could not verify order with Eventbrite"}, status=503)
 
-    if order["event_id"] != settings.EVENTBRITE_EVENT_ID:
-        return JsonResponse({"message": "Order does not belong to this event"}, status=400)
-
     if order["status"] != "placed":
         return JsonResponse({"message": "Order is not complete"}, status=400)
 
@@ -237,9 +242,15 @@ def claim_order(request):
             status=403,
         )
 
+    # ticket_type must be resolved before the event check below — workshop
+    # and variety_show/bundle are two different real events, so which
+    # event_id is "correct" depends on which ticket class this order used.
     ticket_type = _resolve_ticket_type(order["ticket_class_id"])
     if ticket_type is None:
         return JsonResponse({"message": "Unrecognized ticket class"}, status=400)
+
+    if order["event_id"] != settings.EVENTBRITE_EVENT_IDS[ticket_type]:
+        return JsonResponse({"message": "Order does not belong to this event"}, status=400)
 
     try:
         with transaction.atomic():
