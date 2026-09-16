@@ -93,7 +93,15 @@ def _real_get_order(order_id):
     url = f"https://www.eventbriteapi.com/v3/orders/{order_id}/"
     headers = {"Authorization": f"Bearer {settings.EVENTBRITE_API_TOKEN}"}
     try:
-        response = requests.get(url, headers=headers, params={"expand": "attendees"}, timeout=10)
+        # The Order object's own documented `promo_code` field is never
+        # actually populated by the real API (verified against a live
+        # 100%-off order — comes back null even though a code was used).
+        # The real discount data only shows up via the nested
+        # attendees.promotional_code expansion, as {code, percent_off, ...}
+        # on each attendee.
+        response = requests.get(
+            url, headers=headers, params={"expand": "attendees,attendees.promotional_code"}, timeout=10
+        )
     except requests.RequestException as e:
         raise EventbriteError(f"Eventbrite request failed: {e}")
 
@@ -105,12 +113,13 @@ def _real_get_order(order_id):
     raw = response.json()
     attendees = raw.get("attendees", [])
     ticket_class_id = attendees[0]["ticket_class_id"] if attendees else None
+    promotional_code = attendees[0].get("promotional_code") if attendees else None
     return {
         "id": raw["id"],
         "status": raw.get("status"),
         "event_id": raw.get("event_id"),
         "ticket_class_id": ticket_class_id,
-        "discount_code": raw.get("promo_code") or None,
+        "discount_code": promotional_code["code"] if promotional_code else None,
     }
 
 

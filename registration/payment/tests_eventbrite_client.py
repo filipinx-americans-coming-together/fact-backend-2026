@@ -121,6 +121,11 @@ class RealCreateDiscountRequestShapeTest(TestCase):
 class RealGetOrderRequestShapeTest(TestCase):
     @patch("registration.payment.eventbrite_client.requests.get")
     def test_gets_order_by_id_url_with_attendees_expansion(self, mock_get):
+        # The Order object's own documented `promo_code` field is a red
+        # herring: verified against a live 100%-off order, it comes back
+        # null even when a code was used. The real value only appears via
+        # the nested attendees.promotional_code expansion, as {code: ...}
+        # on each attendee — that's what discount_code is read from below.
         mock_get.return_value = Mock(
             ok=True,
             status_code=200,
@@ -128,8 +133,13 @@ class RealGetOrderRequestShapeTest(TestCase):
                 "id": "12345",
                 "status": "placed",
                 "event_id": "event-456",
-                "promo_code": "UIUC_ABC_XYZ",
-                "attendees": [{"ticket_class_id": "ticket-1"}],
+                "promo_code": None,
+                "attendees": [
+                    {
+                        "ticket_class_id": "ticket-1",
+                        "promotional_code": {"code": "UIUC_ABC_XYZ"},
+                    }
+                ],
             },
         )
 
@@ -137,6 +147,6 @@ class RealGetOrderRequestShapeTest(TestCase):
 
         args, kwargs = mock_get.call_args
         self.assertEqual(args[0], "https://www.eventbriteapi.com/v3/orders/12345/")
-        self.assertEqual(kwargs["params"], {"expand": "attendees"})
+        self.assertEqual(kwargs["params"], {"expand": "attendees,attendees.promotional_code"})
         self.assertEqual(order["ticket_class_id"], "ticket-1")
         self.assertEqual(order["discount_code"], "UIUC_ABC_XYZ")
