@@ -116,8 +116,15 @@ def _mock_get_order(order_id):
 # the Attendee Answers expansion keys answers by question_id, which
 # differs per event/question, not by any stable name. Confirmed against
 # the real questions (event 2001126216382 q323798359, event 2001120979719
-# q323798414): text is exactly "NetID", not "UIUC NetID".
-NETID_QUESTION_TEXT = "NetID"
+# q323798414). Matched as a case-insensitive prefix, not exact text: the
+# question was later reworded to "NetID (the part before @illinois.edu,
+# not your UIN)" to stop people entering UINs, and an exact match silently
+# stopped capturing answers.
+NETID_QUESTION_PREFIX = "netid"
+
+
+def _is_netid_question(answer):
+    return (answer.get("question") or "").strip().lower().startswith(NETID_QUESTION_PREFIX)
 
 
 def _real_get_order(order_id):
@@ -160,7 +167,7 @@ def _real_get_order(order_id):
     promotional_code = attendees[0].get("promotional_code") if attendees else None
     answers = attendees[0].get("answers", []) if attendees else []
     netid = next(
-        (a["answer"] for a in answers if a.get("question") == NETID_QUESTION_TEXT and a.get("answer")),
+        (a["answer"] for a in answers if _is_netid_question(a) and a.get("answer")),
         None,
     )
     return {

@@ -173,6 +173,35 @@ class RealGetOrderRequestShapeTest(TestCase):
         self.assertEqual(order["netid"], "jsmith2")
 
     @patch("registration.payment.eventbrite_client.requests.get")
+    def test_reworded_netid_question_still_matches(self, mock_get):
+        # The live question was reworded to steer people away from typing
+        # their UIN; the answer must still be picked up.
+        mock_get.return_value = Mock(
+            ok=True,
+            status_code=200,
+            json=lambda: {
+                "id": "12345",
+                "status": "placed",
+                "event_id": "event-456",
+                "attendees": [
+                    {
+                        "ticket_class_id": "ticket-1",
+                        "answers": [
+                            {
+                                "question_id": "999",
+                                "question": "NetID (the part before @illinois.edu, not your UIN)",
+                                "answer": "jsmith2",
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+
+        order = eventbrite_client.get_order("12345")
+        self.assertEqual(order["netid"], "jsmith2")
+
+    @patch("registration.payment.eventbrite_client.requests.get")
     def test_missing_netid_answer_is_none(self, mock_get):
         mock_get.return_value = Mock(
             ok=True,
