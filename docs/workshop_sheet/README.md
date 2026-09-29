@@ -19,12 +19,14 @@ deliberate step in Django admin.
    This uses the same key, so there's nothing new to configure.
 2. **Sheet:** create a Google Sheet and share it with organizers as editors.
    Copy its ID from the URL (`docs.google.com/spreadsheets/d/<ID>/edit`).
-3. **Script:** go to script.google.com → **New project**. It must be a *standalone*
-   project, not Extensions → Apps Script inside the sheet.
-   - Every editor of a sheet can open a script bound to it and read the key.
-   - A standalone project is visible only to you.
-
-   Paste in `Code.gs` and set `CONFIG.SHEET_ID`.
+3. **Script:** in the sheet, open Extensions → Apps Script (or create a
+   standalone project at script.google.com). Paste in `Code.gs` and set
+   `CONFIG.SHEET_ID`.
+   - If the script is attached to the sheet, every editor can read
+     `SHEETS_API_KEY`.
+   - That key also unlocks the nametag export (delegate names, emails,
+     pronouns, schools), so keep editors to trusted organizers.
+   - Change the key after the conference.
 4. **Key:** go to Project Settings → Script properties and add `SHEETS_API_KEY`
    (same value as on DigitalOcean).
 5. **Run once:** choose and run `setup` (Google asks for permission), then `sync`,

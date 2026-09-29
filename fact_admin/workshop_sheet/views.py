@@ -231,10 +231,9 @@ def workshop_sheet(request):
     """
     Sync endpoint for the workshops Google Sheet's Apps Script
     (docs/workshop_sheet/). Authenticated by the X-Sheets-Key header against
-    SHEETS_API_KEY, the same key as the nametag export — so the script must
-    be a standalone project only its owner can open, never one bound to the
-    organizers' sheet (every editor of a sheet can read its bound script's
-    properties). Disabled unless SHEETS_API_KEY is set.
+    SHEETS_API_KEY, the same key as the nametag export — whoever can read
+    the script's properties (every editor, if it's bound to the sheet) can
+    use it for both. Disabled unless SHEETS_API_KEY is set.
 
     GET: every workshop as sheet rows, one per facilitator.
     POST {"rows": [{<column>: value, "row": <sheet row number>}, ...]}:

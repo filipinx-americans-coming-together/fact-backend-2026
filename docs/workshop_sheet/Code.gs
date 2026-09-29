@@ -1,9 +1,10 @@
 /**
  * FACT 2026 Workshops — Google Apps Script
  *
- * A STANDALONE script (script.google.com → New project), owned by you, not
- * bound to the sheet: organizers edit the sheet, but can't open this
- * project, so SHEETS_API_KEY stays private. Setup: docs/workshop_sheet/README.md.
+ * Works bound to the sheet (Extensions → Apps Script) or as a standalone
+ * project. If bound, every sheet editor can read SHEETS_API_KEY, which also
+ * unlocks the nametag export's delegate data — keep editors to trusted
+ * organizers. Setup: docs/workshop_sheet/README.md.
  *
  * Every 10 minutes:
  *   1. rows with "done" ticked are sent to the FACT backend's
