@@ -179,6 +179,13 @@ def _resolve_facilitator(row, name, email):
             .filter(email__iexact=email).first()
         )
         if contact:
+            # Same email but a different name is a copied row or a reused
+            # address, not a rename (renames go through Facilitator ID).
+            if norm(contact.facilitator.department_name) != norm(name):
+                raise RowError(
+                    f'{email} belongs to "{contact.facilitator.department_name}". '
+                    "Use that facilitator's name, or a different email."
+                )
             return contact.facilitator
 
     # A copied row or a typo would otherwise create a second account.

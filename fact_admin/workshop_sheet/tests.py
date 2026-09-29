@@ -286,6 +286,16 @@ class FacilitatorRowTest(SheetTestCase):
         self.assertEqual(result["facilitator_id"], f.pk)
         self.assertEqual(Facilitator.objects.count(), 1)
 
+    def test_email_match_with_different_name_blocked(self):
+        tech = self.facilitator("tech-facilitator", email="it@example.com")
+        [result] = self.post(row(title="New", description="d", facilitator="Test Facilitator",
+                                 email="IT@example.com"))
+        self.assertEqual(result["level"], "error")
+        self.assertIn('it@example.com belongs to "tech-facilitator"', result["status"])
+        tech.refresh_from_db()
+        self.assertEqual(tech.department_name, "tech-facilitator")
+        self.assertFalse(Workshop.objects.filter(title="New").exists())
+
     def test_duplicate_name_blocked(self):
         self.facilitator("MAFA")
         [result] = self.post(row(workshop_id=self.workshop.pk, title="T", facilitator="mafa"))
