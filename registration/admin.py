@@ -15,6 +15,28 @@ from .models import (
 )
 
 
+class RegistrationInline(admin.TabularInline):
+    # A delegate's workshops, shown on their own admin page. Session/title
+    # are read-only mirrors of the chosen workshop so the list is readable
+    # at a glance without clicking through.
+    model = Registration
+    extra = 0
+    fields = ("workshop", "workshop_session", "workshop_title")
+    readonly_fields = ("workshop_session", "workshop_title")
+    ordering = ("workshop__session",)
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related("workshop")
+
+    @admin.display(description="Session", ordering="workshop__session")
+    def workshop_session(self, obj):
+        return obj.workshop.session if obj.workshop_id else "-"
+
+    @admin.display(description="Title", ordering="workshop__title")
+    def workshop_title(self, obj):
+        return obj.workshop.title if obj.workshop_id else "-"
+
+
 @admin.register(Delegate)
 class DelegateAdmin(admin.ModelAdmin):
     # One row per delegate showing UIUC verification + payment/order state
@@ -41,6 +63,23 @@ class DelegateAdmin(admin.ModelAdmin):
         "uiuc_netid_self_reported",
         "eventbrite_order_id",
     )
+    inlines = (RegistrationInline,)
+
+
+@admin.register(Registration)
+class RegistrationAdmin(admin.ModelAdmin):
+    list_display = ("delegate", "workshop", "workshop_session")
+    list_filter = ("workshop__session", "workshop")
+    search_fields = (
+        "delegate__user__first_name",
+        "delegate__user__last_name",
+        "delegate__user__email",
+    )
+    list_select_related = ("delegate__user", "workshop")
+
+    @admin.display(description="Session", ordering="workshop__session")
+    def workshop_session(self, obj):
+        return obj.workshop.session
 
 
 @admin.register(UIUCPromoCode)
@@ -70,7 +109,6 @@ admin.site.register(Workshop)
 admin.site.register(Location)
 admin.site.register(Facilitator)
 admin.site.register(School)
-admin.site.register(Registration)
 admin.site.register(FacilitatorRegistration)
 admin.site.register(FacilitatorWorkshop)
 admin.site.register(FacilitatorAssistant)
