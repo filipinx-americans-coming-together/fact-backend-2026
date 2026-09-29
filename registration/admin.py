@@ -8,6 +8,7 @@ from django.db import transaction
 from .models import (
     AccountSetUp,
     FacilitatorAssistant,
+    FacilitatorContact,
     FacilitatorRegistration,
     FacilitatorWorkshop,
     NewSchool,
@@ -231,5 +232,6 @@ admin.site.register(School)
 admin.site.register(FacilitatorRegistration)
 admin.site.register(FacilitatorWorkshop)
 admin.site.register(FacilitatorAssistant)
+admin.site.register(FacilitatorContact)
 admin.site.register(NewSchool)
 admin.site.register(AccountSetUp)

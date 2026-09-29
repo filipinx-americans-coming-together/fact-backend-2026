@@ -30,7 +30,7 @@ def serialize_workshop(workshop, include_fas=False):
         "facilitator"
     )
     facilitator_data = serializers.serialize(
-        "json", Facilitator.objects.filter(pk__in=facilitators)
+        "json", Facilitator.objects.filter(pk__in=facilitators).order_by("pk")
     )
 
     data = {

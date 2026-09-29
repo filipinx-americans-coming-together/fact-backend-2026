@@ -176,6 +176,7 @@ CORS_EXPOSE_HEADERS = ["Content-Type", "X-CSRFToken"]
 CORS_ALLOW_CREDENTIALS = True
 
 # email settings
+EMAIL_TIMEOUT = 10  # seconds; a hung SMTP server must not stall a request
 if "test" in sys.argv:
     print("using file email backend")
     EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"

@@ -21,7 +21,8 @@ import pandas as pd
 from fact_admin.models import AdminPasswordReset, AdminPromotion, RegistrationFlag
 from registration import serializers
 from registration.delegate.views import _create_delegate_account, _lock_and_register_workshops
-from registration.models import Delegate, Location, Registration, School, Workshop, Facilitator, AccountSetUp
+from registration.models import Delegate, Location, Registration, School, Workshop, Facilitator, FacilitatorContact
+from registration.facilitator.emails import send_setup_email
 
 # set workshop locations
 # get summary (sheet)
@@ -341,42 +342,27 @@ def send_facilitator_links(request):
                 failed.append(f"No matching email for facilitator: {facilitator.department_name}")
                 continue
 
-            account_setup = AccountSetUp.objects.filter(username=facilitator.user.username).first()
-            if not account_setup:
-                failed.append(f"No account setup found for facilitator: {facilitator.department_name}")
+            contact = FacilitatorContact.objects.filter(facilitator=facilitator).first()
+            if contact and contact.setup_completed_at:
+                failed.append(f"Already set up: {facilitator.department_name}")
                 continue
 
             facilitator_email = match.iloc[0]["Facilitator Email"]
-    
-            # Login link using the stored token
-            login_url = f"{os.getenv('ACCOUNT_SET_UP_URL')}/{account_setup.token}"
-
-            from_email = os.getenv("EMAIL_HOST_USER")
             to_email = [email.strip() for email in facilitator_email.split(",")]
-            
-            subject = (f"FACT 2026 Facilitator Account - {facilitator.department_name}")
-            expiration_str = timezone.localtime(account_setup.expiration).strftime("%A, %B %d at %I:%M%p")
-            body = (
-                f"Dear {facilitator.department_name},\n\n"
-                "As a part of the FACT registration system, each facilitator can access a dashboard showing up to date information on your workshop location and number of delegates registered for your workshop(s). These accounts are meant to supplement your experience as a facilitator and will be deactivated once FACT 2026 has concluded.\n\n"
-                "You will also be able to register for workshops through this account. In your facilitator dashboard, there is an area to register each individual facilitator (one for each individual facilitator name that you provided on the confirmation form) for workshops. Registration is not required for facilitators, but if you have time, we highly recommend checking out the other workshops! We ask that you use the facilitator portal, not the standard/delegate registration page to register for workshops in order to help keep our registration numbers as accurate as possible.\n\n"
-                f"To access your account visit: {login_url}\n\n"
-                f"Your username is: {account_setup.username}\n\nWe do not support username changes at this time. Upon visiting the provided link, you will be prompted to provide an email and password to finish setting up your account. The provided link will expire on {expiration_str}.\n\n"
-                "We recommend that only one member of your organization/department handles and has access to this account to reduce the risk of compromising passwords.\n\n"
-                "After you have set up your account, you can visit https://fact.psauiuc.org/my-fact/login to login (make sure to select “Facilitator” before attempting to login!) to view your workshop information.\n\n"
-                "If you encounter any issues with accessing your account, please contact FACT IT at fact.it@psauiuc.org."
-            )
 
-            # Print email details to console instead of sending for testing
-            # print("=========================================")
-            # print(f"To: {facilitator_email}")
-            # print(f"Subject: {subject}")
-            # print(f"Body:\n{body}")
-            # print("=========================================\n")
-            
             try:
-                send_mail(subject, body, from_email, to_email)
+                # Issues a fresh 7-day link every time; old links expire
+                # after a week and are deleted, so reusing them sent dead links.
+                send_setup_email(facilitator, to_email)
                 sent_count += 1
+                # Record the send so the workshop sheet doesn't email them again.
+                sent_contact, _ = FacilitatorContact.objects.get_or_create(facilitator=facilitator)
+                sent_contact.login_sent_at = timezone.now()
+                fields = ["login_sent_at"]
+                if not sent_contact.email:
+                    sent_contact.email = to_email[0]
+                    fields.append("email")
+                sent_contact.save(update_fields=fields)
             except Exception as e:
                 failed.append(f"Failed to send email to {facilitator_email}: {str(e)}")
 

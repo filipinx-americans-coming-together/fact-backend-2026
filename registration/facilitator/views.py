@@ -18,6 +18,7 @@ from registration import serializers
 from registration.models import (
     AccountSetUp,
     Facilitator,
+    FacilitatorContact,
     FacilitatorRegistration,
     FacilitatorWorkshop,
     Workshop,
@@ -250,14 +251,24 @@ def facilitator_account_set_up(request):
         AccountSetUp.objects.filter(expiration__lt=timezone.now()).delete()
 
         try:
-            setup = AccountSetUp.objects.get(token=token)
-            username = setup.username
-            setup.delete()
+            with transaction.atomic():
+                setup = AccountSetUp.objects.get(token=token)
+                username = setup.username
+                setup.delete()
 
-            user = User.objects.get(username=username)
-            user.set_password(password)
-            user.email = email
-            user.save()
+                user = User.objects.get(username=username)
+                user.set_password(password)
+                user.email = email
+                user.save()
+
+                facilitator = Facilitator.objects.filter(user=user).first()
+                if facilitator:
+                    # Once set up, the sheet must never send another setup link:
+                    # a setup link resets the password.
+                    FacilitatorContact.objects.update_or_create(
+                        facilitator=facilitator,
+                        defaults={"setup_completed_at": timezone.now()},
+                    )
         except (AccountSetUp.DoesNotExist, User.DoesNotExist):
             return JsonResponse({"message": "Invalid set up token"}, status=409)
 

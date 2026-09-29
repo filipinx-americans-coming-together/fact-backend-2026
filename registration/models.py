@@ -45,6 +45,13 @@ class Facilitator(models.Model):
     image_url = models.URLField()
     bio = models.TextField()
     attending_networking_session = models.BooleanField(default=False)
+    # Set by the workshop sheet's photo upload (or the one-time import) so
+    # the workshops page can keep each photo's shape and show a blurred
+    # preview. photo_opaque=False (transparent logo) turns the shadow off.
+    photo_width = models.IntegerField(null=True, blank=True)
+    photo_height = models.IntegerField(null=True, blank=True)
+    photo_blur = models.TextField(blank=True, default="")
+    photo_opaque = models.BooleanField(default=True)
 
     def __str__(self):
         return f"{self.department_name} - {self.fa_name}"
@@ -226,6 +233,25 @@ class FacilitatorAssistant(models.Model):
     name = models.CharField(max_length=200)
     contact = models.CharField(max_length=150)
     workshop = models.ForeignKey(Workshop, on_delete=models.CASCADE)
+
+
+class FacilitatorContact(models.Model):
+    """
+    Private contact email and setup-email tracking for a facilitator, kept
+    off Facilitator because the public workshop/facilitator endpoints
+    serialize every Facilitator field. Never add this to a public
+    serializer. User.email can't hold it either: account setup overwrites
+    User.email with the facilitator's own login email.
+    """
+    facilitator = models.OneToOneField(
+        Facilitator, on_delete=models.CASCADE, related_name="contact"
+    )
+    email = models.EmailField(blank=True)
+    login_sent_at = models.DateTimeField(null=True, blank=True)
+    setup_completed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.facilitator.department_name} contact"
 
 
 class PasswordReset(models.Model):
