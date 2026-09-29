@@ -283,6 +283,20 @@ class FacilitatorAPITestCase(TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertIn("is full", response.json().get("message", ""))
 
+    def test_register_facilitator_rejects_workshop_without_room_and_keeps_old_picks(self):
+        location = Location.objects.create(building="B", room_num="1", capacity=5, session=1)
+        old = Workshop.objects.create(title="Old", description="d", session=1, location=location)
+        FacilitatorRegistration.objects.create(facilitator_name="New Name", workshop_id=old.pk)
+        no_room = Workshop.objects.create(title="No Room", description="d", session=2)
+
+        data = {"facilitator_name": "New Name", "workshops": [no_room.pk]}
+        response = self.client.put(self.register_url, json.dumps(data), content_type="application/json")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(
+            FacilitatorRegistration.objects.filter(facilitator_name="New Name", workshop_id=old.pk).exists()
+        )
+
     def test_register_facilitator_unknown_workshop(self):
         data = {"facilitator_name": "New Name", "workshops": [999999]}
         response = self.client.put(self.register_url, json.dumps(data), content_type="application/json")

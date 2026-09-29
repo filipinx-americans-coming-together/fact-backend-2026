@@ -6,6 +6,7 @@ from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
 from registration.models import (
+    Location,
     Delegate,
     Facilitator,
     FacilitatorWorkshop,
@@ -25,17 +26,17 @@ def _row(**overrides):
         "description": "Intro to kapwa",
         "facilitator": "Counseling Center",
         "facilitator_names": "Ana Cruz, Ben Reyes",
-        "image_url": "https://example.com/cc.png",
+        "photo": "https://example.com/cc.png",
         "bio": "UIUC Counseling Center",
         "position": "",
-        "preferred_cap": "",
-        "moveable_seats": "",
+        "room": "",
+        "capacity": "",
     }
     row.update(overrides)
     return row
 
 
-@override_settings(WORKSHOP_SHEET_API_KEY=TEST_KEY, SHEETS_API_KEY="nametag-key")
+@override_settings(SHEETS_API_KEY=TEST_KEY)
 class WorkshopSheetTest(TestCase):
     def setUp(self):
         self.client = Client()
@@ -58,7 +59,7 @@ class WorkshopSheetTest(TestCase):
         FacilitatorWorkshop.objects.create(facilitator=f, workshop=w)
         return w
 
-    @override_settings(WORKSHOP_SHEET_API_KEY="")
+    @override_settings(SHEETS_API_KEY="")
     def test_disabled_when_key_unset(self):
         response = self._post([_row()])
         self.assertEqual(response.status_code, 503)
@@ -68,10 +69,6 @@ class WorkshopSheetTest(TestCase):
         response = self._post([_row()], key="nope")
         self.assertEqual(response.status_code, 403)
         self.assertFalse(Workshop.objects.exists())
-
-    def test_nametag_key_does_not_work_here(self):
-        response = self._post([_row()], key="nametag-key")
-        self.assertEqual(response.status_code, 403)
 
     def test_creates_workshop_facilitator_and_emails_setup_link(self):
         response = self._post([_row()])
@@ -115,7 +112,7 @@ class WorkshopSheetTest(TestCase):
     def test_blank_cells_do_not_erase_facilitator_details(self):
         workshop = self._existing_workshop()
 
-        self._post([_row(id=workshop.pk, bio="", image_url="", facilitator_names="")])
+        self._post([_row(id=workshop.pk, bio="", photo="", facilitator_names="")])
 
         facilitator = Facilitator.objects.get(department_name="Counseling Center")
         self.assertEqual(facilitator.bio, "old bio")
@@ -201,3 +198,70 @@ class WorkshopSheetTest(TestCase):
             self.url, "not json", content_type="application/json", HTTP_X_SHEETS_KEY=TEST_KEY
         )
         self.assertEqual(response.status_code, 400)
+
+    def test_drive_share_link_becomes_image_link(self):
+        self._post([_row(photo="https://drive.google.com/file/d/1AbC-d_9/view?usp=sharing")])
+
+        facilitator = Facilitator.objects.get(department_name="Counseling Center")
+        self.assertEqual(
+            facilitator.image_url, "https://drive.google.com/uc?export=view&id=1AbC-d_9"
+        )
+
+    def test_non_https_photo_rejected(self):
+        response = self._post([_row(photo="javascript:alert(1)")])
+
+        self.assertEqual(
+            response.json()["results"][0]["status"], "error: photo must be an https:// link"
+        )
+        self.assertFalse(Workshop.objects.exists())
+
+    def test_room_and_capacity(self):
+        room = Location.objects.create(building="Lincoln Hall", room_num="1000", capacity=40, session=1)
+
+        self._post([_row(room="lincoln hall  1000", capacity=25)])
+
+        workshop = Workshop.objects.get(title="Kapwa 101")
+        self.assertEqual(workshop.location, room)
+        room.refresh_from_db()
+        self.assertEqual(room.capacity, 25)
+
+    def test_room_must_exist_in_that_session(self):
+        Location.objects.create(building="Lincoln Hall", room_num="1000", session=2)
+
+        response = self._post([_row(room="Lincoln Hall 1000")])
+
+        self.assertTrue(response.json()["results"][0]["status"].startswith('error: No room "Lincoln Hall 1000" in session 1'))
+        self.assertFalse(Workshop.objects.exists())
+
+    def test_room_already_taken(self):
+        room = Location.objects.create(building="Siebel", room_num="1404", session=1)
+        other = self._existing_workshop(title="Other", facilitator="Library")
+        other.location = room
+        other.save()
+
+        response = self._post([_row(room="Siebel 1404")])
+
+        self.assertEqual(
+            response.json()["results"][0]["status"],
+            'error: Room "Siebel 1404" is already used by "Other"',
+        )
+        self.assertEqual(Workshop.objects.count(), 1)
+
+    def test_capacity_without_room_rejected(self):
+        response = self._post([_row(capacity=30)])
+
+        self.assertTrue(response.json()["results"][0]["status"].startswith("error: Set a room"))
+        self.assertFalse(Workshop.objects.exists())
+
+    def test_blank_room_keeps_existing_room(self):
+        room = Location.objects.create(building="Siebel", room_num="1404", capacity=40, session=1)
+        workshop = self._existing_workshop()
+        workshop.location = room
+        workshop.save()
+
+        self._post([_row(id=workshop.pk, room="", capacity="")])
+
+        workshop.refresh_from_db()
+        self.assertEqual(workshop.location, room)
+        room.refresh_from_db()
+        self.assertEqual(room.capacity, 40)

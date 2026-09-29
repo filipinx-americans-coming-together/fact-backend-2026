@@ -193,6 +193,18 @@ class DelegatesPOST(TestCase):
         response = self.client.post(self.url, data, content_type="application/json")
         self.assertEqual(response.status_code, 409)
 
+    def test_workshop_without_room_rejected(self):
+        workshop = Workshop.objects.create(
+            title="no room yet", description="description", session=1
+        )
+        data = self.good_data.copy()
+        data["workshop_1_id"] = workshop.pk
+
+        response = self.client.post(self.url, data, content_type="application/json")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(Registration.objects.filter(workshop=workshop).exists())
+
     def test_same_session_workshops(self):
         data = self.good_data.copy()
         data["workshop_2_id"] = self.workshop_1.pk  # Both workshop 1 and 2 in session 1

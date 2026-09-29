@@ -304,12 +304,8 @@ EVENTBRITE_UIUC_TICKET_CLASS_IDS = {
     "bundle": env("EVENTBRITE_UIUC_TICKET_CLASS_BUNDLE", default="mock-bundle-uiuc"),
 }
 
-# Shared secret for the read-only nametag export (GET /fact-admin/sheets/nametags/)
-# used by the nametag Google Sheet's Apps Script. Empty = endpoint disabled.
+# Shared secret for the owner's Apps Scripts: the read-only nametag export
+# (GET /fact-admin/sheets/nametags/) and the workshops sheet sync
+# (/fact-admin/sheets/workshops/). Empty = both endpoints disabled.
 SHEETS_API_KEY = env("SHEETS_API_KEY", default="")
 
-# Separate shared secret for the workshops Google Sheet sync
-# (/fact-admin/sheets/workshops/), which can create and edit workshops.
-# Kept apart from SHEETS_API_KEY so the workshop sheet's editors can't use
-# its key to read delegate data. Empty = endpoint disabled.
-WORKSHOP_SHEET_API_KEY = env("WORKSHOP_SHEET_API_KEY", default="")

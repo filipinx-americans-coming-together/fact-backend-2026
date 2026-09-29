@@ -406,6 +406,14 @@ def register_facilitator(request):
 
                 sessions.add(workshop_obj.session)
 
+                # No room yet means no capacity to check against (checked
+                # before the delete below, so a rejection keeps old picks).
+                if workshop_obj.location is None:
+                    return JsonResponse(
+                        {"message": f"{workshop_obj.title} isn't open for registration yet"},
+                        status=409,
+                    )
+
             # clear workshops
             FacilitatorRegistration.objects.filter(
                 facilitator_name=facilitator_name

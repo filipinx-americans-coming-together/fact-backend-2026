@@ -1,52 +1,80 @@
 # Workshops Google Sheet → website
 
-Organizers add and edit workshops in a Google Sheet. The sheet's Apps Script
-(`Code.gs`, next to this file) pushes ticked rows to
-`/fact-admin/sheets/workshops/`, which creates or updates workshops and their
-facilitators. The script writes each row's website `id` and a `status` back into the sheet.
+Organizers add and edit workshops in a Google Sheet. Every 10 minutes a
+standalone Apps Script (`Code.gs`, next to this file) does two things:
+
+- **Push:** it sends rows with **Done** ticked to `POST /fact-admin/sheets/workshops/`.
+- **Pull:** it appends any workshop that's on the website but not yet in the sheet.
+
+The website reads workshops from the backend on every page load, so a saved row
+shows up without a redeploy.
+
+It only **adds and edits**. Nothing is deleted on either side: deleting a
+workshop also deletes every delegate's registration for it, so that stays a
+deliberate step in Django admin.
 
 ## One-time setup
 
-1. **Backend (DigitalOcean env vars):** set `WORKSHOP_SHEET_API_KEY` to a new random
-   secret (`python -c "import secrets; print(secrets.token_urlsafe(32))"`). Don't
-   reuse `SHEETS_API_KEY`: sheet editors can read the script's key, and the
-   nametag key reads delegate data.
-2. **Sheet:** create a Google Sheet, then Extensions → Apps Script. Replace `Code.gs`
-   with this folder's `Code.gs` and save.
-3. **Script properties** (Apps Script → Project Settings → Script properties):
-   - `API_URL`: the backend's base URL (the DigitalOcean app URL, not the Vercel
-     frontend)
-   - `SHEETS_KEY`: the same value as `WORKSHOP_SHEET_API_KEY`
-4. Reload the sheet. A **FACT website** menu appears. Run
-   **Pull workshops from website** once. It creates a `Workshops` tab filled with
-   everything already live, including each row's `id`. Google asks for
-   permission the first time.
-5. Optional: **Turn on auto-push every 15 minutes**. Otherwise use
-   **Push ticked rows to website** whenever you're ready.
+1. **Backend:** `SHEETS_API_KEY` is already set on DigitalOcean for the nametag sheet.
+   This uses the same key, so there's nothing new to configure.
+2. **Sheet:** create a Google Sheet and share it with organizers as editors.
+   Copy its ID from the URL (`docs.google.com/spreadsheets/d/<ID>/edit`).
+3. **Script:** go to script.google.com → **New project**. It must be a *standalone*
+   project, not Extensions → Apps Script inside the sheet.
+   - Every editor of a sheet can open a script bound to it and read the key.
+   - A standalone project is visible only to you.
 
-## Columns
+   Paste in `Code.gs` and set `CONFIG.SHEET_ID`.
+4. **Key:** go to Project Settings → Script properties and add `SHEETS_API_KEY`
+   (same value as on DigitalOcean).
+5. **Run once:** choose and run `setup` (Google asks for permission), then `sync`,
+   then `installTrigger`.
+   - `setup` builds the headers and checkboxes, and protects the ID and Status columns.
+   - `sync` fills the sheet with every current workshop.
+   - `installTrigger` makes `sync` run every 10 minutes.
+
+## For organizers
+
+- **To edit a workshop:** change its cells, then tick **Done**. Within 10 minutes
+  the Status shows `updated`, and Done unticks itself.
+- **To add a workshop:** fill in a new row at the bottom and tick **Done**.
+  - Required: Session, Title, Description, Facilitator.
+  - The ID fills in by itself.
+- **Panels (several facilitators, one workshop):** use one row per facilitator,
+  with the same title and session.
+- **Leave Done unticked** while you're still typing. Unticked rows are never sent
+  and never overwritten.
+- **Red row:** the Status says what's wrong. Fix it and leave Done ticked; it
+  retries on the next sync.
+- **Grey row:** the workshop was deleted in Django admin.
+- **To refresh a row from the website** (e.g. after an edit in Django admin):
+  delete the row, and the next sync adds it back.
 
 | Column | Notes |
 |---|---|
-| `id` | Filled in by the script. Don't type or change it. It's how renames work. |
-| `publish` | Checkbox. Only ticked rows are sent, so half-typed rows stay private. |
-| `title`, `description` | Required. |
-| `session` | 1, 2, or 3. Can't be changed once delegates are registered (move them by hand). |
-| `facilitator` | Organization/department name (e.g. `Counseling Center`). Required for new workshops. A new name creates a facilitator account, and its setup link is emailed to fact.it@psauiuc.org, same as the Excel bulk upload. |
-| `facilitator_names` | Comma-separated people's names. |
-| `image_url`, `bio`, `position` | Facilitator details. Blank cells never erase what's already on the website. |
-| `preferred_cap` | Optional number. |
-| `moveable_seats` | Checkbox. |
-| `status` | Written by the script: `added`, `updated`, or `error: …` with a timestamp. |
+| ID (auto) | Protected. It's how a renamed workshop stays the same workshop. |
+| Room | Must match an existing room for that session, as "Building Room" (e.g. `Lincoln Hall 1000`). Add new rooms under Locations in Django admin. Delegates can't register for a workshop until it has a room. |
+| Capacity | The room's capacity, which is what registration enforces. Needs a room. |
+| Facilitator (org) | A new name creates a facilitator account. Its setup link is emailed to fact.it@psauiuc.org. |
+| Photo link | A Google Drive link shared as "Anyone with the link", or any `https://` image URL. Drive links are checked before sending. |
+| Blank cells | Never erase what's already on the website (room, capacity, photo, bio, names). |
 
-**Panels (several facilitators, one workshop):** use one row per facilitator with the
-same title and session. They all attach to the same workshop.
+## Backend guarantees
 
-## What it deliberately doesn't do
+- Each row is saved on its own, so a bad row doesn't block the rest.
+- A workshop's session can't change once delegates are registered for it.
+- A room can't be given to two workshops.
+- Registration returns "isn't open for registration yet" for a workshop with no
+  room, instead of crashing.
+- Drive share links are stored as `https://drive.google.com/uc?export=view&id=…`,
+  which the frontend's `next.config.mjs` already allows.
 
-- **Never deletes.** Removing a row from the sheet leaves the workshop on the website,
-  because deleting a workshop also deletes every delegate's registration for it.
-  Delete in Django admin (`/admin/registration/workshop/`).
-- **Never assigns rooms.** New workshops have no location. Set it in Django admin.
-  Re-running `matchworkshoplocations` would reshuffle everyone's rooms.
-- **Never removes a facilitator from a workshop.** Do that in Django admin too.
+## Frontend note
+
+The live workshops page takes facilitator names, photos, and bios from the
+hardcoded `src/util/facilitatorPhotos.ts`, looked up by exact title, not from
+the backend. Until the frontend falls back to the backend's facilitator data
+(`/registration/workshops/all/`):
+
+- facilitator details for sheet-added workshops won't show there;
+- renaming a workshop drops its hardcoded card.
