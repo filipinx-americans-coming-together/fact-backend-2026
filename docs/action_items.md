@@ -2,14 +2,34 @@
 
 Based on current infrastructure status and architectural requirements, here is the prioritized roadmap for the development team to prepare the FACT registration system for the upcoming conference.
 
-## 📌 Update (2026-08-31): Eventbrite verified, capacity race fixed, CI actually works now — read this first
+## 📌 Update (2026-09-28): registration is live — read this first
 
-If you're a new Claude Code session picking this up, start here — the 2026-08-17 section below is still accurate background on the three-frontend situation, but the "one substantial backend task left" framing in it is now out of date.
+Registration opened in mid-September 2026. `CLAUDE.md` at the repo root is the most current architecture reference; the sections below are kept as history, with inline notes where they've gone stale.
+
+**Done since 2026-08-31:**
+- **Deployed to DigitalOcean App Platform** (`Procfile` runs `migrate` then gunicorn; `runtime.txt` pins `python-3.14`).
+- **Eventbrite is live, not mocked.** Real API token, organization ID, and event/ticket-class IDs are configured. There are two events: workshop-only tickets on one (`EVENTBRITE_EVENT_ID_WORKSHOP`), variety show and bundle on the other (`EVENTBRITE_EVENT_ID_VSHOW`). UIUC students get separate hidden $0 ticket classes (`EVENTBRITE_UIUC_TICKET_CLASS_*`) unlocked by an access code, not a 100%-off discount on the paid class. The NetID a buyer types into Eventbrite's custom question is saved as `Delegate.uiuc_netid_self_reported` for manual comparison.
+- **Day-of registration built:** `POST /fact-admin/delegates/day-of/` + `fact-frontend-2026`'s `admin/day-of/page.tsx`. The open question below was settled the other way: it marks the delegate paid directly (order ID `DAY_OF_<admin>_<timestamp>`) and does not require an Eventbrite order.
+- **Admin promotion built (option 3 below):** `POST /fact-admin/accounts/promote/` emails a confirmation link (`ADMIN_PROMOTION_URL`); `accounts/promote/confirm/` completes it and creates the account if needed. There's also an admin password-reset flow (`accounts/reset-password/`, `ADMIN_PASSWORD_RESET_URL`). Frontend: `admin/accounts/`.
+- **Shared workshop-registration helper extracted:** `_lock_and_register_workshops` in `registration/delegate/views.py`.
+
+**Still open:**
+- **Shibboleth:** SP endpoints, certs, and env-var cert loading are all done. The iTrust SP registration is still awaiting UIUC approval, so `SAML_MOCK_MODE` can't be turned off yet.
+- **Per-delegate promo-code ownership check is temporarily disabled** in `registration/payment/views.py` (`verify_payment`). Until Shibboleth is live, UIUC students use one fixed, shared Eventbrite code. Two tests in `registration/payment/tests.py` fail because of this (`test_order_with_someone_elses_promo_code_rejected`, `test_uiuc_order_with_matching_promo_redeems_it`). Re-enable the check once Shibboleth-issued codes are the only path.
+- **Cross-site cookie issue:** the frontend (`fact.psauiuc.org`) and backend (`*.ondigitalocean.app`) are on different registrable domains. The planned fix is moving the backend to a `psauiuc.org` subdomain; see `CLAUDE.md`.
+- Phase 1 email-config item, Phase 3 database cleanup, and the mass-email endpoint (below) are still not built.
+- Frontend CI (no GitHub Actions in `fact-frontend-2026`) is still not started.
+
+---
+
+## 📌 Update (2026-08-31): Eventbrite verified, capacity race fixed, CI actually works now
+
+The 2026-08-17 section below is still accurate background on the three-frontend situation, but the "one substantial backend task left" framing in it is now out of date.
 
 **What got done since 2026-08-17:**
 
 1. **Eventbrite integration verified against the real API v3 spec** (the thing the 2026-08-17 update called "the one substantial backend task left"). `registration/payment/eventbrite_client.py`'s `_real_create_discount`/`_real_get_order` were never actually checked against Eventbrite's real docs — they were a documented best guess. Checked them against the real `eventbrite-api-v3-public.apib` spec and found two real mismatches: discount creation is **organization-scoped** (`POST /organizations/{organization_id}/discounts/`), not event-scoped like the code assumed, and the request body must be **JSON nested under `"discount"`**, not form-encoded flat keys. Both fixed; added `EVENTBRITE_ORGANIZATION_ID` setting (`.env` / DO env var, not sensitive) and regression tests that lock in the correct request shape. Order retrieval (`GET /orders/{id}/`, `expand=attendees`) already matched the spec — no change needed there.
-   - **Still blocking:** an actual Eventbrite API token + organization ID + event ID for a real (or sandbox) event, to flip `EVENTBRITE_MOCK_MODE` off and prove this end-to-end once. Nobody has provided one yet.
+   - ~~**Still blocking:** an actual Eventbrite API token + organization ID + event ID for a real (or sandbox) event, to flip `EVENTBRITE_MOCK_MODE` off and prove this end-to-end once.~~ **Resolved (Sept 2026):** real credentials are configured and Eventbrite is live; see the 2026-09-28 update.
 2. **Fixed IT Bugs FACT 2024 #6 ("why are we over capacity")** — the real cause: all three workshop-registration paths (`delegate_me` PUT, `delegates` POST, `register_facilitator` PUT) did a capacity `SELECT` followed by a separate `INSERT` with no locking, so two concurrent requests could both pass the capacity check before either wrote — a classic TOCTOU race, worse the closer a workshop gets to full. Fixed with `select_for_update()` on the relevant `Workshop` rows inside one transaction spanning the check and the write, locked in pk order across all three call sites to avoid deadlocks. Found and fixed a second latent bug in the same code: `register_facilitator`'s same-session duplicate check compared a workshop's primary key against a set of session numbers — could never actually fire.
 3. **Cross-checked the "IT Bugs FACT 2024" list (8 items) against current code:** #3 (agenda edit needing building/room) and #7 (Eventbrite paid but no account — this session's earlier `claim_order` purchase-first flow) were already fixed. #4/#5/#6 (capacity checks) — see above. #1, #2, #8 (stale login session, workshop-rename showing stale data, networking showing under wrong sessions) all look like **frontend caching/display bugs** — nothing in the backend models or views explains them; needs someone with frontend access to actually chase.
 4. **Fixed a crash**: `fact_admin/agenda/views.py`'s single-item agenda create endpoint did `int(session_num)` unconditionally — crashed with an uncaught `TypeError` any time `session_num` was omitted (it's documented as optional; the bulk-upload path already guarded this correctly, the single-item one didn't).
@@ -22,12 +42,12 @@ If you're a new Claude Code session picking this up, start here — the 2026-08-
 - `EMAIL_HOST_USER` / `EMAIL_HOST_PASSWORD` are a Gmail account's address and app password, used as the FACT no-reply sender. The 2025 repo has all six of these already configured as GitHub secrets (confirmed via screenshot of its repo settings) — but GitHub secrets can't be read back out by anyone, including via the API, so those values have to be re-entered by hand from wherever they're actually known (a password manager, or DO's dashboard if the 2025 app is still deployed there and its env vars are still visible).
 - `RESET_PASSWORD_URL` and `ACCOUNT_SET_UP_URL` (note: the code reads `ACCOUNT_SET_UP_URL` with two underscores — double-check this when entering it, since the old workflow file had it misspelled) are the frontend URLs these emails link to. Worth double-checking they point at `fact-frontend-2026`'s actual routes, not a stale 2025 path, before they go into DO.
 
-**Admin page — designed, not yet built.** The one genuinely missing piece from the "day-of registration + import + export" ask (import/export both already exist, see above): an admin-only endpoint + frontend page for creating a delegate account in person, on the day of the conference. Agreed design, not yet implemented:
+**Admin page — built (Sept 2026), see the 2026-09-28 update; the design notes below are historical.** The one genuinely missing piece from the "day-of registration + import + export" ask (import/export both already exist, see above): an admin-only endpoint + frontend page for creating a delegate account in person, on the day of the conference. Agreed design, not yet implemented:
 - **Backend:** new `POST fact-admin/delegates/day-of/` in `fact_admin/actions/views.py`, `FACTAdmin`-gated. Takes name/email/pronouns/year/school + an Eventbrite order ID (the door sale) + optional 3 workshop picks. Reuses `_create_delegate_account` (already extracted and shared by `create_delegate`/`claim_order`) for the account, and the same order-verification logic as `claim_order` to set `payment_status`/`ticket_type` — so a day-of delegate is trustworthy the same way an online one is. Must **not** call `login()` — that would swap the admin's own session for the new delegate's. Whether day-of registration should be able to bypass Eventbrite entirely (mark paid directly, e.g. for comped tickets) is **still an open question** — the design defaults to requiring a real Eventbrite order ID as the safe option, and that's additive to change later, not a rewrite.
 - Since this would be a third copy of the capacity-locked workshop-registration logic (see bug #6 fix above), extract that into one shared helper reused by `delegate_me`, `delegates`, and this new endpoint.
 - **Frontend** (`fact-frontend-2026`): new `admin/day-of/page.tsx` + a `useCreateDayOfDelegate` hook, reusing the existing `useSchools`/`useWorkshops` hooks (same ones the public registration wizard uses). One new link in `admin/components/Navbar.tsx`.
 
-**Admin privilege promotion — needs a decision, a few options on the table:**
+**Admin privilege promotion — decided and built (option 3, Sept 2026), see the 2026-09-28 update. Original options kept for context:**
 
 Right now the *only* way to grant `FACTAdmin` group membership is logging into Django's raw `/admin/` panel and assigning the group by hand (Phase 3 below) — no in-product way for an existing admin to promote someone else, and no self-service path at all. Worth deciding before this becomes a yearly bottleneck for handing off to the next IT chair. Options, not mutually exclusive:
 
@@ -37,11 +57,13 @@ Right now the *only* way to grant `FACTAdmin` group membership is logging into D
 
 Recommendation if it needs one: build option 3, keep option 2 as the break-glass fallback, and skip a hard-gated version of option 1 — use it at most as a warning in option 3's UI ("this email isn't @psauiuc.org, are you sure?").
 
-**Still open, unchanged from before:** the mentioned Eventbrite API key hasn't actually been located/provided yet — needed to flip `EVENTBRITE_MOCK_MODE` off for a real end-to-end test. Frontend CI/CD (no GitHub Actions at all in `fact-frontend-2026`; Vercel's own Git integration is the only thing gating deploys, via whatever `next build` itself catches) — deferred, not started.
+**Still open, unchanged from before:** ~~the mentioned Eventbrite API key hasn't actually been located/provided yet~~ (resolved, Eventbrite is live). Frontend CI/CD (no GitHub Actions at all in `fact-frontend-2026`; Vercel's own Git integration is the only thing gating deploys, via whatever `next build` itself catches) — deferred, not started.
 
 ---
 
-## 📌 Update (2026-08-17): Registration Pipeline Plan — read this first
+## 📌 Update (2026-08-17): Registration Pipeline Plan
+
+> **Historical (as of 2026-09-28):** this plan has been carried out. `fact-frontend-2026` is now the single live frontend (new design plus the full registration, UIUC-verification, and admin flows); the 2025 `fact-website-frontend` repo is no longer used. The Eventbrite integration it describes is live.
 
 Everything below this section was written earlier and is now partly out of date — Shibboleth login and the Eventbrite promo-code *code* both got built since then (see "what's actually done" below). This section is the current, accurate picture. If you're a new Claude Code session picking this up, start here.
 
@@ -83,33 +105,33 @@ The frontend needs the most work, because none of the three existing frontends d
 
 Good news: The DigitalOcean account is already set up, the PostgreSQL database is intact, and the `.env` file is being provided.
 
-- [ ] **Restore DigitalOcean Deployment:** Ensure the App Platform is pulling from the `main` branch and the provided `.env` variables are properly loaded into the DigitalOcean dashboard.
-- [ ] **Fix Email Configuration Bug:** In the backend code, fix the inconsistency where `os.getenv` is used in one file but `env()` is used everywhere else. This prevents silent email failures.
-- [ ] **Fix HTTP Link Bug:** Update the `ACCOUNT_SET_UP_URL` configuration to use `https://` instead of `http://` so facilitator setup links are secure.
+- [x] **Restore DigitalOcean Deployment:** *(Done, Sept 2026.)* Ensure the App Platform is pulling from the `main` branch and the provided `.env` variables are properly loaded into the DigitalOcean dashboard.
+- [ ] **Fix Email Configuration Bug:** In the backend code, fix the inconsistency where `os.getenv` is used in one file but `env()` is used everywhere else. This prevents silent email failures. *(Still open as of 2026-09-28: `settings.py` reads `EMAIL_HOST_USER`/`EMAIL_HOST_PASSWORD` via `os.getenv`, and `fact_admin/actions/views.py` / `registration/workshop/views.py` read `ACCOUNT_SET_UP_URL`, `ADMIN_PROMOTION_URL`, `ADMIN_PASSWORD_RESET_URL`, `EMAIL_HOST_USER` the same way.)*
+- [ ] **Fix HTTP Link Bug:** Update the `ACCOUNT_SET_UP_URL` configuration to use `https://` instead of `http://` so facilitator setup links are secure. *(This is an env var value on DigitalOcean, not code; check it there.)*
 
 ## 🔒 Phase 2: Security & Eventbrite Integration (High Priority)
 
 The current registration flow has a critical security flaw where it blindly trusts a frontend boolean variable. This must be fixed to prevent unauthorized free registrations.
 
-- [ ] **Implement Shibboleth (UIUC Verification):** 
+- [ ] **Implement Shibboleth (UIUC Verification):** *(Code done: `shibboleth_auth` app with `python3-saml`, SP certs generated. iTrust SP registration still awaiting UIUC approval.)*
   - Reach out to UIUC Tech Services to register the app as an official Service Provider.
   - Install the necessary SAML libraries (e.g., `python3-saml`) and build the Shibboleth SSO login flow.
-- [ ] **Dynamic Eventbrite Promo Codes (Backend):**
+- [x] **Dynamic Eventbrite Promo Codes (Backend):** *(Built as `POST /registration/uiuc-promo-code/`, but differently from the plan below: the code is derived from the delegate's opaque Shibboleth targeted ID (no NetID is available), and it is an access code that unlocks a hidden $0 UIUC ticket class rather than a 100%-off discount. Not usable until Shibboleth is approved; a fixed shared code is used meanwhile.)*
   - When Shibboleth verifies a student, the backend must call the Eventbrite Discounts API.
   - Generate a 100% off, single-use promo code formatted as `UIUC_<netid>_<random>`.
   - Pass this code to the frontend to be automatically and secretly injected into the Eventbrite widget.
-- [ ] **Secure Eventbrite Verification (Backend):** Update the `POST /registration/delegates/` endpoint. For non-UIUC students, the backend must require an Eventbrite `order_id` and query the Eventbrite API to verify it is paid and valid before creating the account in the database.
+- [x] **Secure Eventbrite Verification (Backend):** *(Done differently: server-side verification lives in `POST /registration/verify-payment/` and `POST /registration/delegates/claim-order/`, and both workshop-registration endpoints require `payment_status=paid`.)* Update the `POST /registration/delegates/` endpoint. For non-UIUC students, the backend must require an Eventbrite `order_id` and query the Eventbrite API to verify it is paid and valid before creating the account in the database.
 
 ## ⚙️ Phase 3: Admin Features & Database Management (Medium Priority)
 
 The system needs proper tools for coordinators to manage the conference lifecycle and clean up old data.
 
-- [ ] **Build Database Cleanup Function:** Create a secure endpoint (or Django management command) that deletes all old `User` accounts that haven't logged in for 2+ years (excluding FACTAdmin accounts). Because of the database structure, this will automatically cascade and delete their old delegate profiles and workshop registrations, wiping the slate clean for the new year.
-- [ ] **Build Mass Email Feature:** Convert the existing `sendupdate.py` script logic into a usable API endpoint so admins can send announcements to all registered delegates.
-- [ ] **Admin Roles & Privileges Setup:** Ensure coordinators are properly set up with admin access.
+- [ ] **Build Database Cleanup Function:** *(Still not built as of 2026-09-28.)* Create a secure endpoint (or Django management command) that deletes all old `User` accounts that haven't logged in for 2+ years (excluding FACTAdmin accounts). Because of the database structure, this will automatically cascade and delete their old delegate profiles and workshop registrations, wiping the slate clean for the new year.
+- [ ] **Build Mass Email Feature:** *(Still not built as of 2026-09-28; `sendupdate.py` is still only a management command.)* Convert the existing `sendupdate.py` script logic into a usable API endpoint so admins can send announcements to all registered delegates.
+- [ ] **Admin Roles & Privileges Setup:** Ensure coordinators are properly set up with admin access. *(An in-product promotion flow now exists at `/fact-admin/accounts/promote/`, so Django `/admin/` is only the fallback.)*
   - Log into the developer-level Django `/admin/` panel, create accounts for the coordinators, and assign them to the `FACTAdmin` group.
   - This grants them privileges to view the full database, globally edit records, and manually create users (bypassing the standard registration flow).
-- [ ] **Frontend Admin Dashboard UI:** Ensure the frontend React admin pages are actually connected to the existing backend endpoints (`/fact-admin/notifications/`, `/fact-admin/agenda-items/`, `/fact-admin/summary/`) so coordinators have a user-friendly dashboard to work in.
+- [x] **Frontend Admin Dashboard UI:** *(Done in `fact-frontend-2026`'s `src/app/admin/`.)* Ensure the frontend React admin pages are actually connected to the existing backend endpoints (`/fact-admin/notifications/`, `/fact-admin/agenda-items/`, `/fact-admin/summary/`) so coordinators have a user-friendly dashboard to work in.
 
 ## 📊 Phase 4: Data Upload Workflow (Pre-Conference)
 

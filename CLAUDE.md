@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Django backend for FACT (Filipino Americans Coordinating Together), an annual UIUC conference. Handles delegate/facilitator registration, workshop selection and capacity, Eventbrite payment verification, UIUC Shibboleth SSO, and admin tooling (bulk data upload, notifications, agenda). Deploys to DigitalOcean App Platform; the frontend is a separate repo (`fact-2026-frontend`) on Vercel.
+Django backend for FACT (Filipino Americans Coordinating Together), an annual UIUC conference. Handles delegate/facilitator registration, workshop selection and capacity, Eventbrite payment verification, UIUC Shibboleth SSO, and admin tooling (bulk data upload, notifications, agenda). Deploys to DigitalOcean App Platform; the frontend is a separate repo (`fact-frontend-2026`) on Vercel. (An earlier, unrelated prototype directory was also confusingly named `fact-2026-frontend` — archived 2026-09-16, not to be confused with this one.)
 
 ## Commands
 
@@ -69,6 +69,7 @@ Every var below is read by the *same name* in every environment — nothing shou
 | `RESET_PASSWORD_URL` / `ACCOUNT_SET_UP_URL` | `http://localhost:3000/my-fact/reset-password` / `http://localhost:3000/facilitators/account-set-up` (paths confirmed to match `fact-frontend-2026`'s actual `[slug]` routes) | optional placeholders (already set in the workflow) | **required** — same paths, real frontend domain |
 | `EVENTBRITE_MOCK_MODE` | `True` (default, follows `DEVELOPMENT_MODE`) | not needed (tests `@override_settings` this per-class) | `False` once a real Eventbrite token/org/event ID are in hand |
 | `EVENTBRITE_API_TOKEN` / `EVENTBRITE_EVENT_ID` / `EVENTBRITE_ORGANIZATION_ID` / `EVENTBRITE_TICKET_CLASS_*` | not needed while mocked | not needed | **required** once `EVENTBRITE_MOCK_MODE=False` — still not obtained as of this writing, see `docs/action_items.md` |
+| `SHEETS_API_KEY` | not needed (endpoint returns 503 when unset) | not needed (tests `@override_settings` it) | set to a random secret (`python -c "import secrets; print(secrets.token_urlsafe(32))"`) to enable `GET /fact-admin/sheets/nametags/` for the nametag Google Sheet; delete to disable after the conference |
 | `SAML_MOCK_MODE` | `True` (default, follows `DEVELOPMENT_MODE`) | not needed (tests `@override_settings` this per-class) | `False` once UIUC approves the SP registration (see below) |
 | `SAML_SP_BASE_URL` | not needed (default `http://localhost:8000`) | not needed | **required** — `https://fact.psauiuc.org` (or wherever this deploys); the SP cert's CN and the metadata's ACS URL both derive from this |
 | `SAML_SP_ENTITY_ID` | not needed (default derives from `SAML_SP_BASE_URL`) | not needed | usually fine on the default |
