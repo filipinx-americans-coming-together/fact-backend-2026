@@ -12,6 +12,8 @@ from registration.delegate.views import _create_delegate_account
 from registration.models import Delegate, UIUCPromoCode
 from registration.payment import eventbrite_client
 from registration.payment.eventbrite_client import EventbriteError
+# Shared with find_orders_by_email; kept under its old name here.
+from registration.payment.eventbrite_client import resolve_ticket_type as _resolve_ticket_type
 
 
 def _get_authenticated_delegate(request):
@@ -92,18 +94,6 @@ def uiuc_promo_code(request):
     )
 
     return JsonResponse({"code": promo.code, "ticket_type": promo.ticket_type})
-
-
-def _resolve_ticket_type(ticket_class_id):
-    # Checks both the paid, publicly-visible class and the hidden, $0 UIUC
-    # class for each ticket type — an order can legitimately be either one.
-    for ticket_type, class_id in settings.EVENTBRITE_TICKET_CLASS_IDS.items():
-        if class_id == ticket_class_id:
-            return ticket_type
-    for ticket_type, class_id in settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS.items():
-        if class_id == ticket_class_id:
-            return ticket_type
-    return None
 
 
 @require_POST
@@ -188,6 +178,57 @@ def verify_payment(request):
         return JsonResponse({"message": "This order has already been used"}, status=409)
 
     return JsonResponse({"payment_status": delegate.payment_status, "ticket_type": delegate.ticket_type})
+
+
+def _order_hint(order_id):
+    # Only ever the last 4 characters — the full order number is what the
+    # buyer proves ownership with when linking via verify_payment.
+    return "…" + str(order_id)[-4:]
+
+
+@require_GET
+@ratelimit(key="user_or_ip", rate="30/h", block=True)
+def find_my_order(request):
+    """
+    GET /registration/find-my-order/
+
+    Looks up workshop-including Eventbrite orders placed with the
+    authenticated delegate's account email, so the register page can ask
+    them to link an existing ticket instead of buying a second one.
+
+    Never returns a full order ID, only a masked hint: account emails are
+    not verified, so the full order number (from the buyer's Eventbrite
+    confirmation email) stays the proof of ownership, and linking still
+    goes through verify_payment.
+    """
+    delegate = _get_authenticated_delegate(request)
+    if delegate is None:
+        return JsonResponse({"message": "Authentication required"}, status=401)
+
+    if delegate.payment_status == Delegate.PaymentStatus.PAID:
+        return JsonResponse({"already_paid": True, "orders": []})
+
+    try:
+        found = eventbrite_client.find_orders_by_email(request.user.email)
+    except EventbriteError:
+        return JsonResponse({"message": "Could not check Eventbrite"}, status=503)
+
+    linked = set(
+        Delegate.objects.filter(
+            eventbrite_order_id__in=[order["id"] for order in found]
+        ).values_list("eventbrite_order_id", flat=True)
+    )
+
+    return JsonResponse(
+        {
+            "already_paid": False,
+            "orders": [
+                {"order_hint": _order_hint(order["id"]), "ticket_type": order["ticket_type"]}
+                for order in found
+                if order["id"] not in linked
+            ],
+        }
+    )
 
 
 def _claim_order_id_key(group, request):

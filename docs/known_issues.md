@@ -29,3 +29,13 @@ Open issues that are understood but deliberately not fixed yet. Last updated 202
 **How likely:** low. Normal sign-up and `claim-order` reject an email that's already in use, so duplicates mostly come from accounts created by hand in the Django admin or from old data.
 
 **Fix when picked up:** handle multiple matches explicitly, e.g. prefer the account with a `Delegate` profile (or the admin account for the admin flows), or return a clear error; add a test that creates two users with the same email first.
+
+## 3. Email verification isn't enforced by the backend
+
+**Where:** `one_time_verification/views.py` (`verify`) and `registration/delegate/views.py` (`create_delegate` / `_create_delegate_account`).
+
+**Problem:** the create-account page asks for a 6-digit code emailed to the address before showing the sign-up form, but that check only exists in the web page. The backend's `verify` endpoint confirms the code, deletes it and replies "Email verified" without recording anything, and `POST /registration/delegates/create-account` never checks that the email was verified. Anyone who sends the create-account request directly (command line, browser dev tools, a script) can create an account with an email they don't own.
+
+**Effect right now:** low. An attacker could create an account under someone else's email and set its password; the real owner then gets "Email already in use" until an admin fixes it. It becomes serious for any feature that trusts the account email as proof of identity, e.g. automatically linking an Eventbrite order found under that email. The existing-order lookup on the register page (2026-09-29) was designed around this: it only shows a masked order number and requires the full order number to link.
+
+**Fix when picked up:** when `verify` succeeds, record that the email was verified for a short window (e.g. a `verified_at` on `PendingVerification` kept for 30 minutes, or a flag in the session); have `create_delegate` (and `claim_order`, if ever used) reject emails without a recent verification; add tests for both paths. After that, auto-linking orders by email becomes safe.

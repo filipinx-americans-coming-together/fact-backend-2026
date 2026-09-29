@@ -222,3 +222,125 @@ class VerifyPaymentPOSTTest(TestCase):
 
         self.delegate.refresh_from_db()
         self.assertEqual(self.delegate.payment_status, Delegate.PaymentStatus.UNPAID)
+
+
+@override_settings(EVENTBRITE_MOCK_MODE=True)
+class FindMyOrderGETTest(TestCase):
+    FIND = "registration.payment.views.eventbrite_client.find_orders_by_email"
+
+    def setUp(self):
+        self.client = Client()
+        self.url = reverse("registration:find_my_order")
+        self.user = User.objects.create_user(
+            username="jane@example.com", email="jane@example.com", password="password123"
+        )
+        self.delegate = Delegate.objects.create(user=self.user)
+        self.client.login(username="jane@example.com", password="password123")
+
+    def test_requires_authentication(self):
+        self.client.logout()
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 401)
+
+    def test_already_paid_skips_eventbrite(self):
+        self.delegate.payment_status = Delegate.PaymentStatus.PAID
+        self.delegate.eventbrite_order_id = "1111111111"
+        self.delegate.save()
+
+        with patch(self.FIND) as find:
+            response = self.client.get(self.url)
+
+        find.assert_not_called()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"already_paid": True, "orders": []})
+
+    def test_no_orders(self):
+        with patch(self.FIND, return_value=[]) as find:
+            response = self.client.get(self.url)
+
+        find.assert_called_once_with("jane@example.com")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"already_paid": False, "orders": []})
+
+    def test_one_order_is_masked(self):
+        with patch(self.FIND, return_value=[{"id": "12345679203", "ticket_type": "bundle"}]):
+            response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"already_paid": False, "orders": [{"order_hint": "…9203", "ticket_type": "bundle"}]},
+        )
+        # The full order number is the only proof of ownership (account
+        # emails aren't verified) — it must never leave the server here.
+        self.assertNotIn(b"12345679203", response.content)
+        self.assertNotIn("12345679203", response.content.decode("utf-8"))
+
+    def test_two_orders_give_two_hints(self):
+        with patch(
+            self.FIND,
+            return_value=[
+                {"id": "11110001234", "ticket_type": "workshop"},
+                {"id": "22220005678", "ticket_type": "bundle"},
+            ],
+        ):
+            response = self.client.get(self.url)
+
+        self.assertEqual(
+            response.json()["orders"],
+            [
+                {"order_hint": "…1234", "ticket_type": "workshop"},
+                {"order_hint": "…5678", "ticket_type": "bundle"},
+            ],
+        )
+
+    def test_order_linked_to_another_delegate_excluded(self):
+        other = User.objects.create_user(username="b@b.com", email="b@b.com", password="password123")
+        Delegate.objects.create(
+            user=other,
+            payment_status=Delegate.PaymentStatus.PAID,
+            eventbrite_order_id="11110001234",
+            ticket_type=Delegate.TicketType.WORKSHOP,
+        )
+
+        with patch(
+            self.FIND,
+            return_value=[
+                {"id": "11110001234", "ticket_type": "workshop"},
+                {"id": "22220005678", "ticket_type": "bundle"},
+            ],
+        ):
+            response = self.client.get(self.url)
+
+        self.assertEqual(
+            response.json()["orders"], [{"order_hint": "…5678", "ticket_type": "bundle"}]
+        )
+
+    def test_eventbrite_error_returns_503(self):
+        from registration.payment.eventbrite_client import EventbriteError
+
+        with patch(self.FIND, side_effect=EventbriteError("down")):
+            response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {"message": "Could not check Eventbrite"})
+
+    def test_mock_mode_end_to_end(self):
+        # No patching: exercises the real mock branch of the client.
+        user = User.objects.create_user(
+            username="j+hasorder@example.com", email="j+hasorder@example.com", password="password123"
+        )
+        Delegate.objects.create(user=user)
+        self.client.login(username="j+hasorder@example.com", password="password123")
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(
+            response.json(),
+            {"already_paid": False, "orders": [{"order_hint": "…none", "ticket_type": "workshop"}]},
+        )
+        self.assertNotIn("MOCK_ORDER_workshop_none", response.content.decode("utf-8"))
+
+    def test_post_not_allowed(self):
+        response = self.client.post(self.url)
+        self.assertEqual(response.status_code, 405)

@@ -7,7 +7,9 @@ shibboleth_auth's SAML_MOCK_MODE pattern.
 Endpoint shapes verified against Eventbrite's public API v3 spec
 (eventbrite-api-v3-public.apib): Order retrieval at GET /orders/{id}/,
 Discount creation at POST /organizations/{organization_id}/discounts/
-with a JSON body nested under "discount".
+with a JSON body nested under "discount", Order listing at
+GET /events/{event_id}/orders/ ("List Orders by Event ID") with
+only_emails/status filters and continuation-token pagination.
 """
 
 import hashlib
@@ -251,3 +253,116 @@ def create_discount(targeted_id, ticket_type):
 
     raw = _real_create_discount(event_id, uiuc_ticket_class_id, code)
     return {"code": code, "eventbrite_discount_id": raw["id"]}
+
+
+# ---------------------------------------------------------------------------
+# resolve_ticket_type
+# ---------------------------------------------------------------------------
+
+def resolve_ticket_type(ticket_class_id):
+    """
+    Map an Eventbrite ticket_class_id to a Delegate.TicketType value, or
+    None if it isn't one of ours. Shared by verify_payment/claim_order and
+    find_orders_by_email so the mapping lives in one place.
+    """
+    # Checks both the paid, publicly-visible class and the hidden, $0 UIUC
+    # class for each ticket type — an order can legitimately be either one.
+    for ticket_type, class_id in settings.EVENTBRITE_TICKET_CLASS_IDS.items():
+        if class_id == ticket_class_id:
+            return ticket_type
+    for ticket_type, class_id in settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS.items():
+        if class_id == ticket_class_id:
+            return ticket_type
+    return None
+
+
+# ---------------------------------------------------------------------------
+# find_orders_by_email
+# ---------------------------------------------------------------------------
+
+# Ticket types that include workshops. A Variety-Show-only order must not
+# stop someone from buying workshops, so it is never reported.
+_WORKSHOP_TICKET_TYPES = ("workshop", "bundle")
+
+
+def _mock_find_orders_by_email(email):
+    """
+    Deterministic mock: an email local-part containing "+hastwo" has two
+    workshop-including orders, "+hasorder" has one, anything else none.
+    The IDs are valid mock get_order IDs, so linking them through
+    verify_payment works end to end in local dev.
+    """
+    local_part = email.split("@", 1)[0]
+    if "+hastwo" in local_part:
+        return [
+            {"id": "MOCK_ORDER_workshop_none", "ticket_type": "workshop"},
+            {"id": "MOCK_ORDER_bundle_none", "ticket_type": "bundle"},
+        ]
+    if "+hasorder" in local_part:
+        return [{"id": "MOCK_ORDER_workshop_none", "ticket_type": "workshop"}]
+    return []
+
+
+def _real_list_event_orders(event_id, email):
+    url = f"https://www.eventbriteapi.com/v3/events/{event_id}/orders/"
+    headers = {"Authorization": f"Bearer {settings.EVENTBRITE_API_TOKEN}"}
+    params = {"only_emails": email, "status": "active", "expand": "attendees"}
+    orders = []
+    while True:
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+        except requests.RequestException as e:
+            logger.error("Eventbrite list orders (event %s) request failed: %s", event_id, e)
+            raise EventbriteError(f"Eventbrite request failed: {e}")
+
+        if not response.ok:
+            logger.error(
+                "Eventbrite list orders (event %s) failed with status %s: %s",
+                event_id, response.status_code, response.text,
+            )
+            raise EventbriteError(f"Eventbrite API error (status {response.status_code})")
+
+        raw = response.json()
+        orders.extend(raw.get("orders", []))
+        pagination = raw.get("pagination") or {}
+        if not pagination.get("has_more_items") or not pagination.get("continuation"):
+            return orders
+        params = {**params, "continuation": pagination["continuation"]}
+
+
+def _order_workshop_ticket_type(raw_order):
+    # An order can hold several attendees; report it if any of them holds a
+    # workshop-including ticket.
+    for attendee in raw_order.get("attendees", []):
+        ticket_type = resolve_ticket_type(attendee.get("ticket_class_id"))
+        if ticket_type in _WORKSHOP_TICKET_TYPES:
+            return ticket_type
+    return None
+
+
+def find_orders_by_email(email):
+    """
+    Find active FACT orders placed with this email that include workshops
+    (workshop or bundle ticket), across every configured event.
+
+    Returns a list of {"id": str, "ticket_type": str}. The caller must never
+    expose the full id to the client (see find_my_order).
+    Raises EventbriteError if any API call fails.
+    """
+    # An empty only_emails filter could match every order on the event, so
+    # an account without an email never queries Eventbrite at all.
+    email = (email or "").strip()
+    if not email:
+        return []
+
+    if settings.EVENTBRITE_MOCK_MODE:
+        return _mock_find_orders_by_email(email)
+
+    found = []
+    # variety_show and bundle share one event; query each event once.
+    for event_id in dict.fromkeys(settings.EVENTBRITE_EVENT_IDS.values()):
+        for raw_order in _real_list_event_orders(event_id, email):
+            ticket_type = _order_workshop_ticket_type(raw_order)
+            if ticket_type is not None:
+                found.append({"id": str(raw_order["id"]), "ticket_type": ticket_type})
+    return found

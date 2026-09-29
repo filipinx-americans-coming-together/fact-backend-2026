@@ -216,3 +216,150 @@ class RealGetOrderRequestShapeTest(TestCase):
 
         order = eventbrite_client.get_order("12345")
         self.assertIsNone(order["netid"])
+
+
+@override_settings(EVENTBRITE_MOCK_MODE=True)
+class FindOrdersByEmailMockTest(TestCase):
+    def test_plain_email_has_no_orders(self):
+        self.assertEqual(eventbrite_client.find_orders_by_email("a@a.com"), [])
+
+    def test_hasorder_email_returns_one_workshop_order(self):
+        orders = eventbrite_client.find_orders_by_email("jane+hasorder@example.com")
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0]["ticket_type"], "workshop")
+        # The mock ID must be one mock get_order accepts, so linking it
+        # through verify_payment works end to end in local dev.
+        self.assertEqual(eventbrite_client.get_order(orders[0]["id"])["status"], "placed")
+
+    def test_hastwo_email_returns_two_orders(self):
+        orders = eventbrite_client.find_orders_by_email("jane+hastwo@example.com")
+        self.assertEqual(len(orders), 2)
+        self.assertEqual(len({o["id"] for o in orders}), 2)
+
+
+_FIND_SETTINGS = dict(
+    EVENTBRITE_MOCK_MODE=False,
+    EVENTBRITE_API_TOKEN="token-abc",
+    EVENTBRITE_EVENT_IDS={"workshop": "event-ws", "variety_show": "event-vs", "bundle": "event-vs"},
+    EVENTBRITE_TICKET_CLASS_IDS={"variety_show": "tc-vs", "workshop": "tc-ws", "bundle": "tc-bundle"},
+    EVENTBRITE_UIUC_TICKET_CLASS_IDS={
+        "variety_show": "tc-vs-uiuc", "workshop": "tc-ws-uiuc", "bundle": "tc-bundle-uiuc",
+    },
+)
+
+
+def _orders_page(orders, continuation=None):
+    pagination = {"has_more_items": continuation is not None}
+    if continuation is not None:
+        pagination["continuation"] = continuation
+    return Mock(ok=True, status_code=200, json=lambda: {"pagination": pagination, "orders": orders})
+
+
+def _order(order_id, *ticket_class_ids):
+    return {
+        "id": order_id,
+        "status": "placed",
+        "attendees": [{"ticket_class_id": tc} for tc in ticket_class_ids],
+    }
+
+
+@override_settings(**_FIND_SETTINGS)
+class RealFindOrdersByEmailTest(TestCase):
+    """
+    GET /events/{event_id}/orders/ ("List Orders by Event ID" in the v3
+    spec): only_emails filters by the order owner's email, status=active
+    is "Attending Order", and the list is paginated with a continuation
+    token (pagination.has_more_items / pagination.continuation).
+    """
+
+    @patch("registration.payment.eventbrite_client.requests.get")
+    def test_queries_each_distinct_event_once_with_email_filter(self, mock_get):
+        mock_get.return_value = _orders_page([])
+
+        eventbrite_client.find_orders_by_email("jane@example.com")
+
+        urls = [c.args[0] for c in mock_get.call_args_list]
+        self.assertEqual(
+            sorted(urls),
+            [
+                "https://www.eventbriteapi.com/v3/events/event-vs/orders/",
+                "https://www.eventbriteapi.com/v3/events/event-ws/orders/",
+            ],
+        )
+        for c in mock_get.call_args_list:
+            self.assertEqual(c.kwargs["params"]["only_emails"], "jane@example.com")
+            self.assertEqual(c.kwargs["params"]["status"], "active")
+            self.assertEqual(c.kwargs["params"]["expand"], "attendees")
+            self.assertNotIn("continuation", c.kwargs["params"])
+            self.assertEqual(c.kwargs["headers"], {"Authorization": "Bearer token-abc"})
+
+    @patch("registration.payment.eventbrite_client.requests.get")
+    def test_follows_pagination(self, mock_get):
+        def fake_get(url, headers, params, timeout):
+            if "event-ws" not in url:
+                return _orders_page([])
+            if params.get("continuation") == "page-2":
+                return _orders_page([_order("222", "tc-ws")])
+            return _orders_page([_order("111", "tc-ws")], continuation="page-2")
+
+        mock_get.side_effect = fake_get
+
+        orders = eventbrite_client.find_orders_by_email("jane@example.com")
+
+        self.assertEqual(sorted(o["id"] for o in orders), ["111", "222"])
+
+    @patch("registration.payment.eventbrite_client.requests.get")
+    def test_resolves_paid_and_uiuc_ticket_classes(self, mock_get):
+        def fake_get(url, headers, params, timeout):
+            if "event-ws" in url:
+                return _orders_page([_order("111", "tc-ws-uiuc")])
+            return _orders_page([_order("222", "tc-bundle")])
+
+        mock_get.side_effect = fake_get
+
+        orders = eventbrite_client.find_orders_by_email("jane@example.com")
+
+        self.assertEqual(
+            sorted(orders, key=lambda o: o["id"]),
+            [{"id": "111", "ticket_type": "workshop"}, {"id": "222", "ticket_type": "bundle"}],
+        )
+
+    @patch("registration.payment.eventbrite_client.requests.get")
+    def test_variety_show_only_and_unknown_orders_excluded(self, mock_get):
+        def fake_get(url, headers, params, timeout):
+            if "event-vs" in url:
+                return _orders_page([
+                    _order("333", "tc-vs"),
+                    _order("444", "tc-vs-uiuc"),
+                    _order("555", "tc-something-else"),
+                ])
+            return _orders_page([])
+
+        mock_get.side_effect = fake_get
+
+        self.assertEqual(eventbrite_client.find_orders_by_email("jane@example.com"), [])
+
+    @patch("registration.payment.eventbrite_client.requests.get")
+    def test_raises_on_error_response(self, mock_get):
+        mock_get.return_value = Mock(ok=False, status_code=500, text="boom")
+
+        with self.assertRaises(EventbriteError):
+            eventbrite_client.find_orders_by_email("jane@example.com")
+
+    @patch("registration.payment.eventbrite_client.requests.get")
+    def test_blank_email_never_queries_eventbrite(self, mock_get):
+        # An empty only_emails filter could match every order on the event;
+        # an account with no email must simply have no orders.
+        self.assertEqual(eventbrite_client.find_orders_by_email(""), [])
+        self.assertEqual(eventbrite_client.find_orders_by_email("   "), [])
+        self.assertEqual(eventbrite_client.find_orders_by_email(None), [])
+        mock_get.assert_not_called()
+
+    @patch("registration.payment.eventbrite_client.requests.get")
+    def test_raises_on_request_exception(self, mock_get):
+        import requests
+
+        mock_get.side_effect = requests.ConnectionError("down")
+
+        with self.assertRaises(EventbriteError):
+            eventbrite_client.find_orders_by_email("jane@example.com")
