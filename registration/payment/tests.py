@@ -185,9 +185,22 @@ class VerifyPaymentPOSTTest(TestCase):
         self.assertEqual(response.status_code, 400)
 
     def test_unrecognized_order_rejected(self):
+        # A wrong number is the delegate's typo, not an outage: 400 with a
+        # message they can act on (a 5xx gets replaced by the host's own
+        # error page before it reaches the register page).
         response = self.client.post(
             self.url, {"order_id": "totally-bogus"}, content_type="application/json"
         )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("couldn't find that order number", response.json()["message"])
+
+    def test_eventbrite_outage_still_503(self):
+        from registration.payment.eventbrite_client import EventbriteError
+
+        with patch("registration.payment.views.eventbrite_client.get_order", side_effect=EventbriteError("down")):
+            response = self.client.post(
+                self.url, {"order_id": "MOCK_ORDER_workshop_none"}, content_type="application/json"
+            )
         self.assertEqual(response.status_code, 503)
 
     def test_resubmitting_same_order_is_idempotent(self):

@@ -132,6 +132,41 @@ class RealCreateDiscountRequestShapeTest(TestCase):
 
 
 @override_settings(EVENTBRITE_MOCK_MODE=False)
+class RealGetOrderNotFoundTest(TestCase):
+    # Verified against the live API: an unknown order ID returns 404
+    # NOT_FOUND, and a real order belonging to another organizer returns
+    # 403 NOT_AUTHORIZED. Both mean "not one of our orders", not an outage.
+    @patch("registration.payment.eventbrite_client.requests.get")
+    def test_404_raises_order_not_found(self, mock_get):
+        mock_get.return_value = Mock(ok=False, status_code=404, text="NOT_FOUND")
+        with self.assertRaises(eventbrite_client.OrderNotFoundError):
+            eventbrite_client.get_order("12345")
+
+    @patch("registration.payment.eventbrite_client.requests.get")
+    def test_403_raises_order_not_found(self, mock_get):
+        mock_get.return_value = Mock(ok=False, status_code=403, text="NOT_AUTHORIZED")
+        with self.assertRaises(eventbrite_client.OrderNotFoundError):
+            eventbrite_client.get_order("12345")
+
+    def test_non_numeric_id_raises_order_not_found(self):
+        with self.assertRaises(eventbrite_client.OrderNotFoundError):
+            eventbrite_client.get_order("abc")
+
+    @patch("registration.payment.eventbrite_client.requests.get")
+    def test_server_error_is_not_order_not_found(self, mock_get):
+        mock_get.return_value = Mock(ok=False, status_code=500, text="boom")
+        with self.assertRaises(EventbriteError) as ctx:
+            eventbrite_client.get_order("12345")
+        self.assertNotIsInstance(ctx.exception, eventbrite_client.OrderNotFoundError)
+
+
+class GetOrderMockNotFoundTest(TestCase):
+    def test_non_mock_id_raises_order_not_found(self):
+        with self.assertRaises(eventbrite_client.OrderNotFoundError):
+            eventbrite_client.get_order("totally-bogus")
+
+
+@override_settings(EVENTBRITE_MOCK_MODE=False)
 class RealGetOrderRequestShapeTest(TestCase):
     @patch("registration.payment.eventbrite_client.requests.get")
     def test_gets_order_by_id_url_with_attendees_expansion(self, mock_get):

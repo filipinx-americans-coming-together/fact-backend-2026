@@ -11,7 +11,7 @@ from django_ratelimit.decorators import ratelimit
 from registration.delegate.views import _create_delegate_account
 from registration.models import Delegate, UIUCPromoCode
 from registration.payment import eventbrite_client
-from registration.payment.eventbrite_client import EventbriteError
+from registration.payment.eventbrite_client import EventbriteError, OrderNotFoundError
 # Shared with find_orders_by_email; kept under its old name here.
 from registration.payment.eventbrite_client import resolve_ticket_type as _resolve_ticket_type
 
@@ -127,6 +127,16 @@ def verify_payment(request):
 
     try:
         order = eventbrite_client.get_order(order_id)
+    except OrderNotFoundError:
+        # The delegate's typo, not an outage: a 400 with a message they can
+        # act on (the host replaces 5xx bodies with its own error page).
+        return JsonResponse(
+            {
+                "message": "We couldn't find that order number. Check the number in your "
+                "Eventbrite confirmation email and try again."
+            },
+            status=400,
+        )
     except EventbriteError:
         return JsonResponse({"message": "Could not verify order with Eventbrite"}, status=503)
 

@@ -27,6 +27,14 @@ class EventbriteError(Exception):
     """Raised when the Eventbrite API returns an error or unexpected data."""
 
 
+class OrderNotFoundError(EventbriteError):
+    """
+    The order ID isn't one of ours: malformed, unknown to Eventbrite (404),
+    or a real order belonging to another organizer (403). A caller should
+    treat this as the delegate's typo, not an Eventbrite outage.
+    """
+
+
 def _random_suffix(length=16):
     # secrets, not random: this suffix is a bearer credential for a free
     # ticket, not a cosmetic ID — it must not be predictable.
@@ -78,7 +86,7 @@ def _mock_get_order(order_id):
     of incomplete orders can actually be tested.
     """
     if not order_id.startswith("MOCK_ORDER_"):
-        raise EventbriteError(f"Order {order_id} not found")
+        raise OrderNotFoundError(f"Order {order_id} not found")
 
     remainder = order_id[len("MOCK_ORDER_"):]
 
@@ -131,7 +139,7 @@ def _is_netid_question(answer):
 
 def _real_get_order(order_id):
     if not order_id.isdigit():
-        raise EventbriteError(f"Invalid order_id format: '{order_id}'")
+        raise OrderNotFoundError(f"Invalid order_id format: '{order_id}'")
 
     url = f"https://www.eventbriteapi.com/v3/orders/{order_id}/"
     headers = {"Authorization": f"Bearer {settings.EVENTBRITE_API_TOKEN}"}
@@ -153,9 +161,14 @@ def _real_get_order(order_id):
         logger.error("Eventbrite get_order(%s) request failed: %s", order_id, e)
         raise EventbriteError(f"Eventbrite request failed: {e}")
 
-    if response.status_code == 404:
-        logger.error("Eventbrite get_order(%s): order not found (404): %s", order_id, response.text)
-        raise EventbriteError(f"Order {order_id} not found")
+    # 404 = no such order; 403 = a real order owned by another organizer
+    # (verified against the live API). Neither is an outage.
+    if response.status_code in (403, 404):
+        logger.error(
+            "Eventbrite get_order(%s): order not found (%s): %s",
+            order_id, response.status_code, response.text,
+        )
+        raise OrderNotFoundError(f"Order {order_id} not found")
     if not response.ok:
         logger.error(
             "Eventbrite get_order(%s) failed with status %s: %s",
