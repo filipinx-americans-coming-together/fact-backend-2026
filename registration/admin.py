@@ -1,4 +1,10 @@
-from django.contrib import admin
+from collections import Counter
+
+from django import forms
+from django.contrib import admin, messages
+from django.core.exceptions import ValidationError
+from django.db import transaction
+
 from .models import (
     AccountSetUp,
     FacilitatorAssistant,
@@ -15,11 +21,89 @@ from .models import (
 )
 
 
+def registration_problems(delegate, workshops):
+    """
+    The website's workshop-registration rules, for admin edits: `workshops`
+    is the delegate's full intended list. Returns error messages (empty if
+    fine). Capacity and room are only checked for workshops the delegate
+    doesn't already hold, so keeping an existing pick is never blocked.
+    Locks the workshop rows like _lock_and_register_workshops does; the
+    admin's save runs in the same transaction, so the lock covers the write.
+    """
+    problems = []
+
+    counts = Counter(w.pk for w in workshops)
+    for w in {w.pk: w for w in workshops}.values():
+        if counts[w.pk] > 1:
+            problems.append(f'"{w.title}" is listed more than once.')
+
+    by_session = {}
+    for w in {w.pk: w for w in workshops}.values():
+        by_session.setdefault(w.session, []).append(w)
+    for session, items in sorted(by_session.items()):
+        if len(items) > 1:
+            titles = " and ".join(f'"{w.title}"' for w in items)
+            problems.append(f"Only one workshop per session: {titles} are both in session {session}.")
+
+    held = set()
+    if delegate.pk:
+        held = set(
+            Registration.objects.filter(delegate=delegate).values_list("workshop_id", flat=True)
+        )
+    new_ids = sorted({w.pk for w in workshops} - held)
+    with transaction.atomic():
+        locked = Workshop.objects.select_for_update().select_related("location").filter(pk__in=new_ids)
+        for w in locked.order_by("pk"):
+            if w.location is None:
+                problems.append(f'"{w.title}" has no room yet, so it can\'t take registrations.')
+                continue
+            taken = (
+                Registration.objects.filter(workshop=w).exclude(delegate=delegate).count()
+                + FacilitatorRegistration.objects.filter(workshop=w).count()
+            )
+            if taken >= w.location.capacity:
+                problems.append(f'"{w.title}" is full ({taken}/{w.location.capacity}).')
+
+    return problems
+
+
+def warn_if_not_eligible(request, delegate):
+    """The website only lets paid workshop/bundle ticket holders register."""
+    if delegate.payment_status != Delegate.PaymentStatus.PAID or delegate.ticket_type not in (
+        Delegate.TicketType.WORKSHOP,
+        Delegate.TicketType.BUNDLE,
+    ):
+        messages.warning(
+            request,
+            f"Saved, but {delegate} isn't a paid workshop or bundle ticket holder "
+            f"(payment: {delegate.payment_status}, ticket: {delegate.ticket_type or 'none'}). "
+            "The website wouldn't have let them register.",
+        )
+
+
+class RegistrationInlineFormSet(forms.BaseInlineFormSet):
+    def clean(self):
+        super().clean()
+        if any(self.errors):
+            return
+        workshops = [
+            form.cleaned_data["workshop"]
+            for form in self.forms
+            if form.cleaned_data
+            and not form.cleaned_data.get("DELETE")
+            and form.cleaned_data.get("workshop")
+        ]
+        problems = registration_problems(self.instance, workshops)
+        if problems:
+            raise ValidationError(problems)
+
+
 class RegistrationInline(admin.TabularInline):
     # A delegate's workshops, shown on their own admin page. Session/title
     # are read-only mirrors of the chosen workshop so the list is readable
     # at a glance without clicking through.
     model = Registration
+    formset = RegistrationInlineFormSet
     extra = 0
     fields = ("workshop", "workshop_session", "workshop_title")
     readonly_fields = ("workshop_session", "workshop_title")
@@ -65,9 +149,38 @@ class DelegateAdmin(admin.ModelAdmin):
     )
     inlines = (RegistrationInline,)
 
+    def save_formset(self, request, form, formset, change):
+        super().save_formset(request, form, formset, change)
+        if formset.model is Registration and formset.has_changed() and any(
+            not f.cleaned_data.get("DELETE") for f in formset.forms if f.cleaned_data
+        ):
+            warn_if_not_eligible(request, form.instance)
+
+
+class RegistrationAdminForm(forms.ModelForm):
+    class Meta:
+        model = Registration
+        fields = "__all__"
+
+    def clean(self):
+        cleaned = super().clean()
+        delegate = cleaned.get("delegate")
+        workshop = cleaned.get("workshop")
+        if delegate and workshop:
+            others = Registration.objects.filter(delegate=delegate).select_related("workshop")
+            if self.instance.pk:
+                others = others.exclude(pk=self.instance.pk)
+            problems = registration_problems(
+                delegate, [r.workshop for r in others] + [workshop]
+            )
+            if problems:
+                raise ValidationError(problems)
+        return cleaned
+
 
 @admin.register(Registration)
 class RegistrationAdmin(admin.ModelAdmin):
+    form = RegistrationAdminForm
     list_display = ("delegate", "workshop", "workshop_session")
     list_filter = ("workshop__session", "workshop")
     search_fields = (
@@ -76,6 +189,10 @@ class RegistrationAdmin(admin.ModelAdmin):
         "delegate__user__email",
     )
     list_select_related = ("delegate__user", "workshop")
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        warn_if_not_eligible(request, obj.delegate)
 
     @admin.display(description="Session", ordering="workshop__session")
     def workshop_session(self, obj):
