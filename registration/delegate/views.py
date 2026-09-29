@@ -87,8 +87,8 @@ def _lock_and_register_workshops(delegate, requested_ids, replace_existing):
                 + FacilitatorRegistration.objects.filter(workshop_id=workshop_id).count()
             )
 
-            # Workshops added from the organizers' sheet have no room until
-            # one is assigned, and capacity lives on the room.
+            # A workshop has no room until one is assigned in admin, and
+            # capacity lives on the room.
             if workshop.location is None:
                 return JsonResponse(
                     {"message": f"{workshop.title} isn't open for registration yet"},

@@ -57,8 +57,10 @@ def registration_problems(delegate, workshops):
             if w.location is None:
                 problems.append(f'"{w.title}" has no room yet, so it can\'t take registrations.')
                 continue
+            # w isn't one the delegate holds, so every seat counted is
+            # someone else's (and the delegate may not be saved yet).
             taken = (
-                Registration.objects.filter(workshop=w).exclude(delegate=delegate).count()
+                Registration.objects.filter(workshop=w).count()
                 + FacilitatorRegistration.objects.filter(workshop=w).count()
             )
             if taken >= w.location.capacity:

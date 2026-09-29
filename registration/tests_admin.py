@@ -1,6 +1,7 @@
 from django.contrib.auth.models import User
 from django.test import Client, TestCase
 
+from .admin import registration_problems
 from .models import Delegate, FacilitatorRegistration, Location, Registration, School, Workshop
 
 
@@ -229,6 +230,14 @@ class RegistrationAdminChecksTest(TestCase):
 
         self.assertContains(response, "is full")
         self.assertEqual(self._held(self.delegate), {"S1 A"})
+
+    def test_unsaved_delegate_checks_capacity(self):
+        # "Add delegate" validates the workshop rows before the delegate is saved.
+        new = Delegate(user=User.objects.create_user("dee", "dee@example.com", "pw"))
+        Registration.objects.create(delegate=self._delegate("ben"), workshop=self.s2)
+
+        self.assertEqual(registration_problems(new, [self.s1_b]), [])
+        self.assertEqual(registration_problems(new, [self.s2]), ['"S2" is full (1/1).'])
 
     def test_registration_page_edit_to_other_session_allowed(self):
         reg = Registration.objects.get(delegate=self.delegate)
