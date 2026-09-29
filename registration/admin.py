@@ -53,7 +53,15 @@ def registration_problems(delegate, workshops):
         )
     new_ids = sorted({w.pk for w in workshops} - held)
     with transaction.atomic():
-        locked = Workshop.objects.select_for_update().select_related("location").filter(pk__in=new_ids)
+        # of=("self",): lock only the workshop rows. Postgres refuses FOR
+        # UPDATE on the nullable side of the LEFT JOIN that select_related
+        # adds for Workshop.location (SQLite ignores FOR UPDATE, so tests
+        # don't catch this).
+        locked = (
+            Workshop.objects.select_for_update(of=("self",))
+            .select_related("location")
+            .filter(pk__in=new_ids)
+        )
         for w in locked.order_by("pk"):
             if w.location is None:
                 problems.append(f'"{w.title}" has no room yet, so it can\'t take registrations.')
