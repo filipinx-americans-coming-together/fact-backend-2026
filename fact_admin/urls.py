@@ -30,6 +30,7 @@ urlpatterns = [
     ),
     path("sheets/delegates/", action_views.delegate_sheet, name="delegate_sheet"),
     path("sheets/locations/", action_views.location_sheet, name="location_sheet"),
+    path("sheets/nametags/", action_views.nametag_sheet, name="nametag_sheet"),
     path("accounts/send-facilitator-links/", action_views.send_facilitator_links, name="send_facilitator_links"),
     path("accounts/promote/", action_views.promote_admin, name="promote_admin"),
     path("accounts/promote/confirm/", action_views.promote_admin_confirm, name="promote_admin_confirm"),

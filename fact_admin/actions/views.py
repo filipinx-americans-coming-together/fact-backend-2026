@@ -3,6 +3,7 @@ import re
 import secrets
 import string
 import unicodedata
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.http import FileResponse, HttpResponse, JsonResponse
 from django.core import serializers as django_serializers
@@ -232,6 +233,58 @@ def location_sheet(request):
         return response
     else:
         return JsonResponse({"message": "method not allowed"}, status=405)
+
+
+def _nametag_record(d):
+    sessions = {"1": None, "2": None, "3": None}
+    for reg in d.registration_set.all():
+        workshop = reg.workshop
+        if workshop and workshop.session in (1, 2, 3):
+            loc = workshop.location
+            sessions[str(workshop.session)] = {
+                "workshop": workshop.title,
+                "location": f"{loc.building} {loc.room_num}" if loc else "",
+            }
+    return {
+        "first_name": d.user.first_name,
+        "last_name": d.user.last_name,
+        "email": d.user.email,
+        "pronouns": d.pronouns,
+        "year": d.year,
+        "school": d.school.name if d.school else (d.other_school or ""),
+        "ticket_type": d.ticket_type,
+        "eventbrite_order_id": d.eventbrite_order_id,
+        "sessions": sessions,
+    }
+
+
+def nametag_sheet(request):
+    """
+    GET: Paid workshop/bundle delegates with sessions and rooms, as JSON, for
+    the nametag Google Sheet's Apps Script. Authenticated by the
+    X-Sheets-Key header instead of an admin session (a scheduled script
+    can't hold one). Disabled unless SHEETS_API_KEY is set.
+    Email is included only so the script can match duplicate purchases.
+    """
+    if not settings.SHEETS_API_KEY:
+        return JsonResponse({"message": "Nametag export is disabled"}, status=503)
+
+    provided = request.headers.get("X-Sheets-Key", "")
+    if not secrets.compare_digest(provided, settings.SHEETS_API_KEY):
+        return JsonResponse({"message": "Invalid key"}, status=403)
+
+    if request.method != "GET":
+        return JsonResponse({"message": "method not allowed"}, status=405)
+
+    delegates = (
+        Delegate.objects.filter(
+            payment_status=Delegate.PaymentStatus.PAID,
+            ticket_type__in=[Delegate.TicketType.WORKSHOP, Delegate.TicketType.BUNDLE],
+        )
+        .select_related("user", "school")
+        .prefetch_related("registration_set__workshop__location")
+    )
+    return JsonResponse({"delegates": [_nametag_record(d) for d in delegates]})
 
 def send_facilitator_links(request):
     """

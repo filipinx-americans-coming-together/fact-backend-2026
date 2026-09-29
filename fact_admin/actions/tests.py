@@ -1,6 +1,6 @@
 import json
 from django.core import mail
-from django.test import TestCase, Client
+from django.test import TestCase, Client, override_settings
 from django.urls import reverse
 from django.contrib.auth.models import Group, User
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
@@ -744,3 +744,105 @@ class DayOfRegistrationPOST(TestCase):
         self.assertFalse(User.objects.filter(email=self.good_data["email"]).exists())
     def test_gets_sheet(self):
         pass
+
+
+TEST_SHEETS_KEY = "test-sheets-key"
+
+
+@override_settings(SHEETS_API_KEY=TEST_SHEETS_KEY)
+class NametagSheetGET(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.url = reverse("fact_admin:nametag_sheet")
+        self.school = School.objects.create(name="University of Illinois Urbana-Champaign")
+
+        self.loc1 = Location.objects.create(building="Siebel", room_num="1404", session=1)
+        self.loc3 = Location.objects.create(building="Lincoln Hall", room_num="1000", session=3)
+        self.ws1 = Workshop.objects.create(title="Intro to Design", description="d", session=1, location=self.loc1)
+        self.ws2_no_loc = Workshop.objects.create(title="No Room Yet", description="d", session=2, location=None)
+        self.ws3 = Workshop.objects.create(title="Community Organizing", description="d", session=3, location=self.loc3)
+
+    def _delegate(self, username, ticket_type, payment_status="paid", order_id=None, school=None, other_school=None):
+        user = User.objects.create_user(
+            username=username, email=f"{username}@example.com", password="pw-123456",
+            first_name=username.capitalize(), last_name="Tester",
+        )
+        return Delegate.objects.create(
+            user=user, pronouns="they/them", year="Junior", school=school, other_school=other_school,
+            ticket_type=ticket_type, payment_status=payment_status, eventbrite_order_id=order_id,
+        )
+
+    def _get(self, key=TEST_SHEETS_KEY):
+        headers = {"HTTP_X_SHEETS_KEY": key} if key is not None else {}
+        return self.client.get(self.url, **headers)
+
+    @override_settings(SHEETS_API_KEY="")
+    def test_disabled_when_key_unset(self):
+        response = self._get()
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {"message": "Nametag export is disabled"})
+
+    def test_missing_key_rejected(self):
+        response = self._get(key=None)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json(), {"message": "Invalid key"})
+
+    def test_wrong_key_rejected(self):
+        response = self._get(key="nope")
+        self.assertEqual(response.status_code, 403)
+
+    def test_post_not_allowed(self):
+        response = self.client.post(self.url, HTTP_X_SHEETS_KEY=TEST_SHEETS_KEY)
+        self.assertEqual(response.status_code, 405)
+
+    def test_includes_only_paid_workshop_and_bundle(self):
+        self._delegate("work", "workshop", order_id="1", school=self.school)
+        self._delegate("bund", "bundle", order_id="2", school=self.school)
+        self._delegate("vshow", "variety_show", order_id="3", school=self.school)
+        self._delegate("unpaid", "workshop", payment_status="unpaid", school=self.school)
+        self._delegate("noticket", None, payment_status="unpaid", school=self.school)
+
+        response = self._get()
+
+        self.assertEqual(response.status_code, 200)
+        names = sorted(d["first_name"] for d in response.json()["delegates"])
+        self.assertEqual(names, ["Bund", "Work"])
+
+    def test_record_fields_and_sessions(self):
+        d = self._delegate("jane", "bundle", order_id="123456789", school=self.school)
+        Registration.objects.create(delegate=d, workshop=self.ws1)
+        Registration.objects.create(delegate=d, workshop=self.ws3)
+
+        record = self._get().json()["delegates"][0]
+
+        self.assertEqual(record, {
+            "first_name": "Jane",
+            "last_name": "Tester",
+            "email": "jane@example.com",
+            "pronouns": "they/them",
+            "year": "Junior",
+            "school": "University of Illinois Urbana-Champaign",
+            "ticket_type": "bundle",
+            "eventbrite_order_id": "123456789",
+            "sessions": {
+                "1": {"workshop": "Intro to Design", "location": "Siebel 1404"},
+                "2": None,
+                "3": {"workshop": "Community Organizing", "location": "Lincoln Hall 1000"},
+            },
+        })
+
+    def test_workshop_without_location_gives_empty_room(self):
+        d = self._delegate("noloc", "workshop", order_id="5", school=self.school)
+        Registration.objects.create(delegate=d, workshop=self.ws2_no_loc)
+
+        sessions = self._get().json()["delegates"][0]["sessions"]
+
+        self.assertEqual(sessions["2"], {"workshop": "No Room Yet", "location": ""})
+
+    def test_school_falls_back_to_other_school_then_empty(self):
+        self._delegate("other", "workshop", order_id="6", other_school="Loyola")
+        self._delegate("none", "workshop", order_id="7")
+
+        schools = {d["first_name"]: d["school"] for d in self._get().json()["delegates"]}
+
+        self.assertEqual(schools, {"Other": "Loyola", "None": ""})
