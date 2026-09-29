@@ -73,6 +73,26 @@ function missingRows_(websiteRows, sheetValues) {
   return websiteRows.filter(w => !have.has(rowKey_(w.id, w.facilitator))).map(toSheetRow_);
 }
 
+// Each room can hold one workshop per session. Rows of the same workshop
+// (panel facilitators) share a title, so only a different title in the same
+// session and room is a clash. Returns {sheetRowNumber: message}.
+function roomConflicts_(values) {
+  const byRoom = new Map(); // "session|room" -> [{rowNum, title}]
+  values.forEach((v, i) => {
+    const room = norm_(v[COL.room]).replace(/\s+/g, ' ');
+    if (!room) return;
+    const key = norm_(v[COL.session]) + '|' + room;
+    if (!byRoom.has(key)) byRoom.set(key, []);
+    byRoom.get(key).push({ rowNum: FIRST_DATA_ROW + i, title: norm_(v[COL.title]) });
+  });
+  const out = {};
+  byRoom.forEach(rows => rows.forEach(r => {
+    const others = rows.filter(o => o.title !== r.title).map(o => o.rowNum);
+    if (others.length) out[r.rowNum] = `room is also used in this session by row ${others.join(', ')}`;
+  }));
+  return out;
+}
+
 function driveId_(link) {
   const m = String(link || '').match(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?(?:[^#]*&)?id=)([\w-]+)/);
   return m ? m[1] : null;
@@ -96,6 +116,27 @@ function setup() {
   sheet.getRange(FIRST_DATA_ROW, COL.session + 1, rows).setDataValidation(
     SpreadsheetApp.newDataValidation().requireValueInList(['1', '2', '3']).build());
   sheet.getRange(FIRST_DATA_ROW, COL.description + 1, rows).setWrap(true);
+
+  // Room cell turns red as soon as it repeats another workshop's room in the
+  // same session. Mirrors roomConflicts_ (same title = same workshop).
+  const roomRange = sheet.getRange(FIRST_DATA_ROW, COL.room + 1, rows);
+  const colLetter = c => String.fromCharCode(65 + COL[c]);
+  const [S, T, R] = ['session', 'title', 'room'].map(colLetter);
+  const top = FIRST_DATA_ROW;
+  const formula =
+    `=AND(LEN(TRIM($${R}${top}))>0, SUMPRODUCT(` +
+    `($${S}$${top}:$${S}&""=$${S}${top}&"")*` +
+    `(LOWER(TRIM($${R}$${top}:$${R}))=LOWER(TRIM($${R}${top})))*` +
+    `(LOWER(TRIM($${T}$${top}:$${T}))<>LOWER(TRIM($${T}${top}))))>0)`;
+  const roomRule = SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied(formula).setBackground('#e53935').setFontColor('#ffffff')
+    .setRanges([roomRange]).build();
+  // Replace only this rule on re-runs, keeping any formatting organizers add.
+  const kept = sheet.getConditionalFormatRules().filter(rule => {
+    const c = rule.getBooleanCondition();
+    return !(c && String(c.getCriteriaValues()[0]).includes('SUMPRODUCT'));
+  });
+  sheet.setConditionalFormatRules(kept.concat([roomRule]));
 
   // Organizers can edit everything except the status line, headers, and
   // the two auto columns.
@@ -140,12 +181,14 @@ function sync() {
 
     // 1. Push ticked rows.
     const outgoing = [];
-    const photoErrors = {};
+    const localErrors = {};
+    const rooms = roomConflicts_(values);
     values.forEach((v, i) => {
       if (v[COL.done] !== true) return;
       const rowNum = FIRST_DATA_ROW + i;
+      if (rooms[rowNum]) { localErrors[rowNum] = rooms[rowNum]; return; }
       const photoError = checkPhoto_(v[COL.photo]);
-      if (photoError) { photoErrors[rowNum] = photoError; return; }
+      if (photoError) { localErrors[rowNum] = photoError; return; }
       const row = { row: rowNum };
       COLUMNS.forEach(c => { if (c !== 'done' && c !== 'status') row[c] = v[COL[c]]; });
       outgoing.push(row);
@@ -153,8 +196,8 @@ function sync() {
 
     let pushed = 0;
     let errors = 0;
-    Object.keys(photoErrors).forEach(rowNum => {
-      writeResult_(sheet, +rowNum, null, 'error: ' + photoErrors[rowNum], now, false);
+    Object.keys(localErrors).forEach(rowNum => {
+      writeResult_(sheet, +rowNum, null, 'error: ' + localErrors[rowNum], now, false);
       errors++;
     });
     if (outgoing.length) {

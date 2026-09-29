@@ -55,7 +55,7 @@ deliberate step in Django admin.
 | Column | Notes |
 |---|---|
 | ID (auto) | Protected. It's how a renamed workshop stays the same workshop. |
-| Room | Must match an existing room for that session, as "Building Room" (e.g. `Lincoln Hall 1000`). Add new rooms under Locations in Django admin. Delegates can't register for a workshop until it has a room. |
+| Room | Must match an existing room for that session, as "Building Room" (e.g. `Lincoln Hall 1000`, or a placeholder like `TBD 3`). Add new rooms under Locations in Django admin. Delegates can't register for a workshop until it has a room. A room used by two different workshops in the same session turns red as you type, and neither row is sent until one is changed. Rows of the same panel (same title) can share a room. |
 | Capacity | The room's capacity, which is what registration enforces. Needs a room. |
 | Facilitator (org) | A new name creates a facilitator account. Its setup link is emailed to fact.it@psauiuc.org. |
 | Photo link | A Google Drive link shared as "Anyone with the link", or any `https://` image URL. Drive links are checked before sending. |
