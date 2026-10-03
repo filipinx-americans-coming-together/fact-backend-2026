@@ -825,9 +825,11 @@ class NametagSheetGET(TestCase):
             "ticket_type": "bundle",
             "eventbrite_order_id": "123456789",
             "sessions": {
-                "1": {"workshop": "Intro to Design", "location": "Siebel 1404"},
+                "1": {"workshop": "Intro to Design", "location": "Siebel 1404",
+                      "building": "Siebel", "room": "1404"},
                 "2": None,
-                "3": {"workshop": "Community Organizing", "location": "Lincoln Hall 1000"},
+                "3": {"workshop": "Community Organizing", "location": "Lincoln Hall 1000",
+                      "building": "Lincoln Hall", "room": "1000"},
             },
         })
 
@@ -837,7 +839,7 @@ class NametagSheetGET(TestCase):
 
         sessions = self._get().json()["delegates"][0]["sessions"]
 
-        self.assertEqual(sessions["2"], {"workshop": "No Room Yet", "location": ""})
+        self.assertEqual(sessions["2"], {"workshop": "No Room Yet", "location": "", "building": "", "room": ""})
 
     def test_school_falls_back_to_other_school_then_empty(self):
         self._delegate("other", "workshop", order_id="6", other_school="Loyola")

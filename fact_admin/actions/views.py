@@ -248,6 +248,8 @@ def _nametag_record(d):
             sessions[str(workshop.session)] = {
                 "workshop": workshop.title,
                 "location": f"{loc.building} {loc.room_num}" if loc else "",
+                "building": loc.building if loc else "",
+                "room": loc.room_num if loc else "",
             }
     return {
         "first_name": d.user.first_name,
