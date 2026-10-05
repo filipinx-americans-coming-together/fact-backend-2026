@@ -791,8 +791,8 @@ class NametagSheetGET(TestCase):
         response = self._get(key="nope")
         self.assertEqual(response.status_code, 403)
 
-    def test_post_not_allowed(self):
-        response = self.client.post(self.url, HTTP_X_SHEETS_KEY=TEST_SHEETS_KEY)
+    def test_put_not_allowed(self):
+        response = self.client.put(self.url, HTTP_X_SHEETS_KEY=TEST_SHEETS_KEY)
         self.assertEqual(response.status_code, 405)
 
     def test_includes_only_paid_workshop_and_bundle(self):
@@ -848,3 +848,228 @@ class NametagSheetGET(TestCase):
         schools = {d["first_name"]: d["school"] for d in self._get().json()["delegates"]}
 
         self.assertEqual(schools, {"Other": "Loyola", "None": ""})
+
+
+@override_settings(SHEETS_API_KEY=TEST_SHEETS_KEY)
+class NametagSheetPOST(TestCase):
+    def setUp(self):
+        self.client = Client(enforce_csrf_checks=True)
+        self.url = reverse("fact_admin:nametag_sheet")
+        self.uiuc = School.objects.create(name="University of Illinois Urbana-Champaign")
+        self.d = self._delegate("jane", order_id="111")
+
+    def _delegate(self, username, order_id, ticket_type="bundle", payment_status="paid"):
+        user = User.objects.create_user(
+            username=username, email=f"{username}@example.com", password="pw-123456",
+            first_name=username.capitalize(), last_name="Tester",
+        )
+        return Delegate.objects.create(
+            user=user, pronouns="they/them", year="Junior", school=self.uiuc,
+            ticket_type=ticket_type, payment_status=payment_status, eventbrite_order_id=order_id,
+        )
+
+    def _edit(self, field, old, new, order_id="111", email="jane@example.com"):
+        return {"order_id": order_id, "email": email, "field": field, "old": old, "new": new}
+
+    def _post(self, edits, key=TEST_SHEETS_KEY):
+        headers = {"HTTP_X_SHEETS_KEY": key} if key is not None else {}
+        return self.client.post(self.url, data=json.dumps({"edits": edits}),
+                                content_type="application/json", **headers)
+
+    def _result(self, edit):
+        response = self._post([edit])
+        self.assertEqual(response.status_code, 200)
+        return response.json()["results"][0]
+
+    @override_settings(SHEETS_API_KEY="")
+    def test_disabled_when_key_unset(self):
+        self.assertEqual(self._post([]).status_code, 503)
+
+    def test_wrong_key_rejected_and_nothing_saved(self):
+        response = self._post([self._edit("last_name", "Tester", "Santos")], key="nope")
+        self.assertEqual(response.status_code, 403)
+        self.d.user.refresh_from_db()
+        self.assertEqual(self.d.user.last_name, "Tester")
+
+    def test_csrf_not_required(self):
+        # enforce_csrf_checks=True in setUp: a 200 here proves @csrf_exempt.
+        self.assertEqual(self._post([]).status_code, 200)
+
+    def test_invalid_json_is_400(self):
+        response = self.client.post(self.url, data="{", content_type="application/json",
+                                    HTTP_X_SHEETS_KEY=TEST_SHEETS_KEY)
+        self.assertEqual(response.status_code, 400)
+
+    def test_edits_not_a_list_is_400(self):
+        response = self.client.post(self.url, data=json.dumps({"edits": "x"}),
+                                    content_type="application/json", HTTP_X_SHEETS_KEY=TEST_SHEETS_KEY)
+        self.assertEqual(response.status_code, 400)
+
+    def test_saves_names_pronouns_and_year(self):
+        results = self._post([
+            self._edit("first_name", "Jane", "Janet"),
+            self._edit("last_name", "Tester", "  Santos-Cruz "),
+            self._edit("pronouns", "they/them", "she/her"),
+            self._edit("year", "Junior", "Senior"),
+        ]).json()["results"]
+
+        self.assertEqual([r["ok"] for r in results], [True] * 4)
+        self.assertEqual(results[0], {"order_id": "111", "field": "first_name", "ok": True, "message": "saved"})
+        self.d.refresh_from_db()
+        self.d.user.refresh_from_db()
+        self.assertEqual((self.d.user.first_name, self.d.user.last_name), ("Janet", "Santos-Cruz"))
+        self.assertEqual((self.d.pronouns, self.d.year), ("she/her", "Senior"))
+
+    def test_school_matching_a_listed_school_sets_the_school(self):
+        loyola = School.objects.create(name="Loyola University Chicago")
+        self.d.school, self.d.other_school = None, "loyola"
+        self.d.save()
+
+        result = self._result(self._edit("school", "loyola", "LOYOLA university chicago"))
+
+        self.assertTrue(result["ok"])
+        self.d.refresh_from_db()
+        self.assertEqual((self.d.school, self.d.other_school), (loyola, None))
+
+    def test_unlisted_school_goes_to_other_school(self):
+        result = self._result(self._edit("school", "University of Illinois Urbana-Champaign", "Parkland College"))
+
+        self.assertTrue(result["ok"])
+        self.d.refresh_from_db()
+        self.assertEqual((self.d.school, self.d.other_school), (None, "Parkland College"))
+
+    def test_blank_school_clears_both(self):
+        self.assertTrue(self._result(self._edit("school", "University of Illinois Urbana-Champaign", ""))["ok"])
+        self.d.refresh_from_db()
+        self.assertEqual((self.d.school, self.d.other_school), (None, None))
+
+    def test_conflict_rejected_and_backend_value_kept(self):
+        self.d.user.last_name = "Changed-On-Site"
+        self.d.user.save()
+
+        result = self._result(self._edit("last_name", "Tester", "Santos"))
+
+        self.assertFalse(result["ok"])
+        self.assertIn("Changed on the site", result["message"])
+        self.d.user.refresh_from_db()
+        self.assertEqual(self.d.user.last_name, "Changed-On-Site")
+
+    def test_conflict_message_does_not_echo_current_value(self):
+        self.d.pronouns = "hunter2!"
+        self.d.save()
+
+        result = self._result(self._edit("pronouns", "they/them", "she/her"))
+
+        self.assertFalse(result["ok"])
+        self.assertNotIn("hunter2", result["message"])
+
+    def test_old_compared_after_trimming(self):
+        self.assertTrue(self._result(self._edit("last_name", "  Tester ", "Santos"))["ok"])
+
+    def test_null_old_skips_conflict_check(self):
+        self.d.pronouns = "p4ssword"
+        self.d.save()
+
+        result = self._result(self._edit("pronouns", None, "she/her"))
+
+        self.assertTrue(result["ok"])
+        self.d.refresh_from_db()
+        self.assertEqual(self.d.pronouns, "she/her")
+
+    def test_edit_already_applied_is_ok_even_with_stale_old(self):
+        self._post([self._edit("last_name", "Tester", "Santos")])
+
+        result = self._result(self._edit("last_name", "Tester", "Santos"))
+
+        self.assertEqual((result["ok"], result["message"]), (True, "already saved"))
+
+    def test_email_must_match_case_insensitively(self):
+        self.assertTrue(self._result(self._edit("last_name", "Tester", "Santos", email="JANE@Example.com"))["ok"])
+        result = self._result(self._edit("last_name", "Santos", "Other", email="someone@example.com"))
+        self.assertFalse(result["ok"])
+        self.d.user.refresh_from_db()
+        self.assertEqual(self.d.user.last_name, "Santos")
+
+    def test_unknown_order_rejected(self):
+        self.assertFalse(self._result(self._edit("last_name", "Tester", "Santos", order_id="999"))["ok"])
+
+    def test_unpaid_and_variety_show_delegates_not_editable(self):
+        self._delegate("unpaid", order_id="222", payment_status="unpaid")
+        self._delegate("vshow", order_id="333", ticket_type="variety_show")
+        for order_id, email in (("222", "unpaid@example.com"), ("333", "vshow@example.com")):
+            result = self._result(self._edit("last_name", "Tester", "Santos", order_id=order_id, email=email))
+            self.assertFalse(result["ok"], order_id)
+
+    def test_blank_name_rejected(self):
+        result = self._result(self._edit("first_name", "Jane", "   "))
+        self.assertFalse(result["ok"])
+        self.d.user.refresh_from_db()
+        self.assertEqual(self.d.user.first_name, "Jane")
+
+    def test_blank_pronouns_and_year_allowed(self):
+        results = self._post([self._edit("pronouns", "they/them", ""),
+                              self._edit("year", "Junior", "")]).json()["results"]
+        self.assertEqual([r["ok"] for r in results], [True, True])
+
+    def test_too_long_rejected(self):
+        result = self._result(self._edit("pronouns", "they/them", "x" * 31))
+        self.assertFalse(result["ok"])
+        self.assertIn("30", result["message"])
+
+    def test_refunded_delegate_not_editable(self):
+        self._delegate("refunded", order_id="444", payment_status="refunded")
+        result = self._result(self._edit("last_name", "Tester", "Santos", order_id="444", email="refunded@example.com"))
+        self.assertFalse(result["ok"])
+
+    def test_first_name_over_150_chars_rejected(self):
+        result = self._result(self._edit("first_name", "Jane", "x" * 151))
+        self.assertFalse(result["ok"])
+        self.assertIn("150", result["message"])
+        self.d.user.refresh_from_db()
+        self.assertEqual(self.d.user.first_name, "Jane")
+
+    def test_school_over_150_chars_rejected(self):
+        result = self._result(self._edit("school", "University of Illinois Urbana-Champaign", "x" * 151))
+        self.assertFalse(result["ok"])
+        self.assertIn("150", result["message"])
+        self.d.refresh_from_db()
+        self.assertEqual(self.d.school, self.uiuc)
+
+    def test_line_break_in_value_rejected(self):
+        for value in ("Jane\nDoe", "Jane\rDoe", "Jane\r\nDoe"):
+            result = self._result(self._edit("last_name", "Tester", value))
+            self.assertFalse(result["ok"], repr(value))
+            self.assertIn("Line breaks", result["message"])
+        self.d.user.refresh_from_db()
+        self.assertEqual(self.d.user.last_name, "Tester")
+
+    def test_log_has_delegate_old_and_new_but_never_current(self):
+        with self.assertLogs("fact_admin.actions.nametag_edits", level="INFO") as cm:
+            self._result(self._edit("pronouns", None, "she/her"))
+        line = cm.output[0]
+        self.assertIn(f"delegate {self.d.pk} pronouns", line)
+        self.assertIn("None", line)
+        self.assertIn("she/her", line)
+        self.assertNotIn("they/them", line)
+
+    def test_non_profile_field_rejected(self):
+        result = self._result(self._edit("email", "jane@example.com", "evil@example.com"))
+        self.assertFalse(result["ok"])
+        self.d.user.refresh_from_db()
+        self.assertEqual(self.d.user.email, "jane@example.com")
+
+    def test_non_string_new_rejected(self):
+        self.assertFalse(self._result(self._edit("year", "Junior", 3))["ok"])
+
+    def test_bad_edit_does_not_block_the_rest(self):
+        results = self._post([
+            "not an edit",
+            self._edit("email", "", "x"),
+            self._edit("last_name", "Tester", "Santos"),
+        ]).json()["results"]
+        self.assertEqual([r["ok"] for r in results], [False, False, True])
+
+    def test_get_still_works_after_edit(self):
+        self._post([self._edit("last_name", "Tester", "Santos")])
+        response = self.client.get(self.url, HTTP_X_SHEETS_KEY=TEST_SHEETS_KEY)
+        self.assertEqual(response.json()["delegates"][0]["last_name"], "Santos")

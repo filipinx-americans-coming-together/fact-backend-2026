@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import secrets
 import string
@@ -18,11 +19,14 @@ import os
 
 import pandas as pd
 
+from .nametag_edits import EditError, apply_edit
 from fact_admin.models import AdminPasswordReset, AdminPromotion, RegistrationFlag
 from registration import serializers
 from registration.delegate.views import _create_delegate_account, _lock_and_register_workshops
 from registration.models import Delegate, Location, Registration, School, Workshop, Facilitator, FacilitatorContact
 from registration.facilitator.emails import send_setup_email
+
+logger = logging.getLogger(__name__)
 
 # set workshop locations
 # get summary (sheet)
@@ -264,13 +268,18 @@ def _nametag_record(d):
     }
 
 
+@csrf_exempt  # key-authenticated server-to-server call, no cookies involved
 def nametag_sheet(request):
     """
-    GET: Paid workshop/bundle delegates with sessions and rooms, as JSON, for
-    the nametag Google Sheet's Apps Script. Authenticated by the
+    For the nametag Google Sheet's Apps Script. Authenticated by the
     X-Sheets-Key header instead of an admin session (a scheduled script
     can't hold one). Disabled unless SHEETS_API_KEY is set.
-    Email is included only so the script can match duplicate purchases.
+
+    GET: paid workshop/bundle delegates with sessions and rooms. Email is
+    included so the script can match duplicate purchases.
+    POST {"edits": [...]}: officer edits to first/last name, pronouns,
+    school and year; see nametag_edits.apply_edit. Each edit is saved in
+    its own transaction and gets a result, in order.
     """
     if not settings.SHEETS_API_KEY:
         return JsonResponse({"message": "Nametag export is disabled"}, status=503)
@@ -279,6 +288,8 @@ def nametag_sheet(request):
     if not secrets.compare_digest(provided, settings.SHEETS_API_KEY):
         return JsonResponse({"message": "Invalid key"}, status=403)
 
+    if request.method == "POST":
+        return _nametag_edits(request)
     if request.method != "GET":
         return JsonResponse({"message": "method not allowed"}, status=405)
 
@@ -291,6 +302,35 @@ def nametag_sheet(request):
         .prefetch_related("registration_set__workshop__location")
     )
     return JsonResponse({"delegates": [_nametag_record(d) for d in delegates]})
+
+
+def _nametag_edits(request):
+    try:
+        edits = json.loads(request.body).get("edits")
+    except (ValueError, AttributeError):
+        return JsonResponse({"message": "Invalid JSON"}, status=400)
+    if not isinstance(edits, list):
+        return JsonResponse({"message": "edits must be a list"}, status=400)
+
+    results = []
+    for edit in edits:
+        if not isinstance(edit, dict):
+            results.append({"order_id": None, "field": None, "ok": False, "message": "Not an edit"})
+            continue
+        base = {"order_id": edit.get("order_id"), "field": edit.get("field")}
+        try:
+            with transaction.atomic():
+                message = apply_edit(edit)
+        except EditError as e:
+            results.append({**base, "ok": False, "message": str(e)})
+            continue
+        except Exception:
+            logger.exception("Nametag sheet edit failed for order %s", edit.get("order_id"))
+            results.append({**base, "ok": False, "message": "Server error; tell FACT IT"})
+            continue
+        results.append({**base, "ok": True, "message": message})
+    return JsonResponse({"results": results})
+
 
 def send_facilitator_links(request):
     """
