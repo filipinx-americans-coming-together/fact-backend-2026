@@ -261,13 +261,17 @@ def delegates(request):
         workshop_2_id = data.get("workshop_2_id")
         workshop_3_id = data.get("workshop_3_id")
 
-        workshop_ids = [int(workshop_1_id), int(workshop_2_id), int(workshop_3_id)]
+        workshop_ids = [int(workshop_1_id), int(workshop_2_id)]
+        # temporary allow delegates to not register for session 3
+        if (workshop_3_id is not None and int(workshop_3_id) > -1):
+            workshop_ids.append(int(workshop_3_id))
+        
 
         # validate data
-        if None in workshop_ids:
-            return JsonResponse(
-                {"message": "Must register for all three sessions"}, status=400
-            )
+        # if None in workshop_ids:
+        #     return JsonResponse(
+        #         {"message": "Must register for all three sessions"}, status=400
+        #     )
 
         # check user exists
         try:
