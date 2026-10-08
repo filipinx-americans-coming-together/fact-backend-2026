@@ -281,7 +281,7 @@ def resolve_ticket_type(ticket_class_id):
     # Checks both the paid, publicly-visible class and the hidden, $0 UIUC
     # class for each ticket type — an order can legitimately be either one.
     id = f"{ticket_class_id}"
-    print(id, settings.EVENTBRITE_TICKET_CLASS_IDS.items())
+    print(ticket_class_id, id, settings.EVENTBRITE_TICKET_CLASS_IDS.items())
     for ticket_type, class_id_list in settings.EVENTBRITE_TICKET_CLASS_IDS.items():
         if id in class_id_list:
             return ticket_type
