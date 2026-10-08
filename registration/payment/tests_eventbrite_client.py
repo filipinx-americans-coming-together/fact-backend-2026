@@ -12,7 +12,7 @@ class ResolveEventbriteIds(TestCase):
     def test_workshop(self):
         self.assertEqual(["workshop"], settings.EVENTBRITE_TICKET_CLASS_IDS["workshop"])
     def test_bundle(self):
-        self.assertEqual(["bundle-floor", "bundle-balcony"], settings.EVENTBRITE_TICKET_CLASS_IDS["bundle"])
+        self.assertEqual(["100","101"], settings.EVENTBRITE_TICKET_CLASS_IDS["bundle"])
     def test_uiuc_variety_show(self):
         self.assertEqual(["vs-floor-uiuc", "vs-balcony-uiuc"], settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS["variety_show"])
     def test_uiuc_workshop(self):
@@ -31,7 +31,7 @@ class ResolveEventbriteIds(TestCase):
             res = eventbrite_client.resolve_ticket_type(id)
             self.assertEqual(res, "workshop")
     def test_resolve_bundle(self):
-        ticket_class_ids = ["bundle-floor", "bundle-balcony", "bundle-floor-uiuc", "bundle-balcony-uiuc"]
+        ticket_class_ids = [100, 101, "bundle-floor-uiuc", "bundle-balcony-uiuc"]
         for id in ticket_class_ids:
             res = eventbrite_client.resolve_ticket_type(id)
             self.assertEqual(res, "bundle")
