@@ -289,9 +289,9 @@ EVENTBRITE_EVENT_IDS = {
 
 # Paid, publicly visible ticket classes.
 EVENTBRITE_TICKET_CLASS_IDS = {
-    "variety_show": env("EVENTBRITE_TICKET_CLASS_VARIETY_SHOW", default="mock-variety-show"),
-    "workshop": env("EVENTBRITE_TICKET_CLASS_WORKSHOP", default="mock-workshop"),
-    "bundle": env("EVENTBRITE_TICKET_CLASS_BUNDLE", default="mock-bundle"),
+    "variety_show": env.list("EVENTBRITE_TICKET_CLASS_VARIETY_SHOW", default=["mock-variety-show"]),
+    "workshop": env.list("EVENTBRITE_TICKET_CLASS_WORKSHOP", default=["mock-workshop"]),
+    "bundle": env.list("EVENTBRITE_TICKET_CLASS_BUNDLE", default=["mock-bundle"]),
 }
 
 # Hidden, $0 ticket classes only revealed by an "access" discount code —
@@ -300,9 +300,9 @@ EVENTBRITE_TICKET_CLASS_IDS = {
 # so the free tier can carry its own capacity and its own custom question
 # (NetID collection) without touching the public ticket at all.
 EVENTBRITE_UIUC_TICKET_CLASS_IDS = {
-    "variety_show": env("EVENTBRITE_UIUC_TICKET_CLASS_VARIETY_SHOW", default="mock-variety-show-uiuc"),
-    "workshop": env("EVENTBRITE_UIUC_TICKET_CLASS_WORKSHOP", default="mock-workshop-uiuc"),
-    "bundle": env("EVENTBRITE_UIUC_TICKET_CLASS_BUNDLE", default="mock-bundle-uiuc"),
+    "variety_show": env.list("EVENTBRITE_UIUC_TICKET_CLASS_VARIETY_SHOW", default=["mock-variety-show-uiuc"]),
+    "workshop": env.list("EVENTBRITE_UIUC_TICKET_CLASS_WORKSHOP", default=["mock-workshop-uiuc"]),
+    "bundle": env.list("EVENTBRITE_UIUC_TICKET_CLASS_BUNDLE", default=["mock-bundle-uiuc"]),
 }
 
 # Shared secret for the read-only nametag export (GET /fact-admin/sheets/nametags/)

@@ -6,6 +6,35 @@ from django.test import TestCase, override_settings
 from registration.payment import eventbrite_client
 from registration.payment.eventbrite_client import EventbriteError
 
+class ResolveEventbriteIds(TestCase):
+    def test_variety_show(self):
+        self.assertEqual(["vs-floor", "vs-balcony"], settings.EVENTBRITE_TICKET_CLASS_IDS["variety_show"])
+    def test_workshop(self):
+        self.assertEqual(["workshop"], settings.EVENTBRITE_TICKET_CLASS_IDS["workshop"])
+    def test_bundle(self):
+        self.assertEqual(["bundle-floor", "bundle-balcony"], settings.EVENTBRITE_TICKET_CLASS_IDS["bundle"])
+    def test_uiuc_variety_show(self):
+        self.assertEqual(["vs-floor-uiuc", "vs-balcony-uiuc"], settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS["variety_show"])
+    def test_uiuc_workshop(self):
+        self.assertEqual(["workshop-uiuc"], settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS["workshop"])
+    def test_uiuc_bundle(self):
+        self.assertEqual(["bundle-floor-uiuc", "bundle-balcony-uiuc"], settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS["bundle"])
+
+    def test_resolve_variety_show(self):
+        ticket_class_ids = ["vs-floor", "vs-balcony", "vs-floor-uiuc", "vs-balcony-uiuc"]
+        for id in ticket_class_ids:
+            res = eventbrite_client.resolve_ticket_type(id)
+            self.assertEqual(res, "variety_show")
+    def test_resolve_workshop(self):
+        ticket_class_ids = ["workshop", "workshop-uiuc"]
+        for id in ticket_class_ids:
+            res = eventbrite_client.resolve_ticket_type(id)
+            self.assertEqual(res, "workshop")
+    def test_resolve_bundle(self):
+        ticket_class_ids = ["bundle-floor", "bundle-balcony", "bundle-floor-uiuc", "bundle-balcony-uiuc"]
+        for id in ticket_class_ids:
+            res = eventbrite_client.resolve_ticket_type(id)
+            self.assertEqual(res, "bundle")
 
 @override_settings(EVENTBRITE_MOCK_MODE=True)
 class GetOrderMockTest(TestCase):
@@ -20,7 +49,7 @@ class GetOrderMockTest(TestCase):
         # paid one — mirrors the real two-classes-per-type setup.
         order = eventbrite_client.get_order("MOCK_ORDER_bundle_FREE_none")
         self.assertEqual(
-            order["ticket_class_id"], settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS["bundle"]
+            order["ticket_class_id"], settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS["bundle"][0]
         )
 
     def test_valid_mock_order_with_discount(self):
@@ -38,7 +67,7 @@ class GetOrderMockTest(TestCase):
     def test_valid_mock_order_variety_show_ticket_type(self):
         order = eventbrite_client.get_order("MOCK_ORDER_variety_show_none")
         self.assertEqual(
-            order["ticket_class_id"], settings.EVENTBRITE_TICKET_CLASS_IDS["variety_show"]
+            order["ticket_class_id"], settings.EVENTBRITE_TICKET_CLASS_IDS["variety_show"][0]
         )
         self.assertIsNone(order["discount_code"])
 
@@ -50,7 +79,7 @@ class GetOrderMockTest(TestCase):
         order = eventbrite_client.get_order("MOCK_ORDER_PENDING_workshop_none")
         self.assertEqual(order["status"], "pending")
         self.assertEqual(
-            order["ticket_class_id"], settings.EVENTBRITE_TICKET_CLASS_IDS["workshop"]
+            order["ticket_class_id"], settings.EVENTBRITE_TICKET_CLASS_IDS["workshop"][0]
         )
 
     @override_settings(EVENTBRITE_MOCK_MODE=False)

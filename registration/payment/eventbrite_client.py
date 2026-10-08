@@ -101,10 +101,10 @@ def _mock_get_order(order_id):
             rest = remainder[len(prefix):]
 
             if rest.startswith("FREE_"):
-                ticket_class_id = settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS[ticket_type]
+                ticket_class_id = settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS[ticket_type][0]
                 rest = rest[len("FREE_"):]
             else:
-                ticket_class_id = settings.EVENTBRITE_TICKET_CLASS_IDS[ticket_type]
+                ticket_class_id = settings.EVENTBRITE_TICKET_CLASS_IDS[ticket_type][0]
 
             discount_code = rest if rest != "none" else None
             return {
@@ -280,11 +280,11 @@ def resolve_ticket_type(ticket_class_id):
     """
     # Checks both the paid, publicly-visible class and the hidden, $0 UIUC
     # class for each ticket type — an order can legitimately be either one.
-    for ticket_type, class_id in settings.EVENTBRITE_TICKET_CLASS_IDS.items():
-        if class_id == ticket_class_id:
+    for ticket_type, class_id_list in settings.EVENTBRITE_TICKET_CLASS_IDS.items():
+        if ticket_class_id in class_id_list:
             return ticket_type
-    for ticket_type, class_id in settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS.items():
-        if class_id == ticket_class_id:
+    for ticket_type, class_id_list in settings.EVENTBRITE_UIUC_TICKET_CLASS_IDS.items():
+        if ticket_class_id in class_id_list:
             return ticket_type
     return None
 
